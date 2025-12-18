@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # ============================================
-# Armbian软件自动安装脚本
+# Armbian软件自动安装脚本（优化版）
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
+# 版本：2.1.0
 # ============================================
 
 # 脚本功能说明：
@@ -21,6 +22,13 @@
 # - 具有root权限或sudo权限
 
 # ============================================
+# 配置参数
+# ============================================
+MAX_RETRIES=3
+RETRY_DELAY=2
+PROGRESS_BAR_WIDTH=50
+
+# ============================================
 # 颜色定义
 # ============================================
 RED='\033[0;31m'
@@ -35,7 +43,7 @@ NC='\033[0m' # No Color
 # 变量定义
 # ============================================
 SCRIPT_NAME="Armbian软件安装脚本"
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="2.1.0"
 INSTALL_LOG="/var/log/armbian_install_$(date +%Y%m%d_%H%M%S).log"
 TEMP_DIR="/tmp/armbian_install"
 
@@ -45,9 +53,129 @@ INSTALL_NAPCATQQ=true
 INSTALL_1PANLE=false
 INSTALL_COPLAR=false
 
+# 进度跟踪
+TOTAL_STEPS=0
+CURRENT_STEP=0
+CURRENT_SECTION=""
+SECTION_STEPS=0
+SECTION_CURRENT=0
+
 # ============================================
 # 函数定义
 # ============================================
+
+# 初始化进度系统
+init_progress() {
+    TOTAL_STEPS=$1
+    CURRENT_STEP=0
+    echo ""
+}
+
+# 显示主进度条
+show_main_progress() {
+    local step=$1
+    local total=$2
+    local description=$3
+    local percentage=$((step * 100 / total))
+    local filled=$((percentage * PROGRESS_BAR_WIDTH / 100))
+    local empty=$((PROGRESS_BAR_WIDTH - filled))
+    
+    printf "\r${BLUE}["
+    printf "%${filled}s" "" | tr ' ' '='
+    printf "%${empty}s" "" | tr ' ' ' '
+    printf "] ${percentage}%% - ${description}${NC}"
+    
+    if [ $percentage -eq 100 ]; then
+        echo ""
+    fi
+}
+
+# 显示小节进度
+show_section_progress() {
+    local step=$1
+    local total=$2
+    local description=$3
+    
+    if [ $step -eq $total ]; then
+        printf "\r${GREEN}  ✓ ${description} 完成${NC}\n"
+    else
+        printf "\r${BLUE}  ↳ ${description}${NC}"
+    fi
+}
+
+# 开始新小节
+start_section() {
+    CURRENT_SECTION="$1"
+    SECTION_STEPS="$2"
+    SECTION_CURRENT=0
+    echo ""
+    print_message "$CYAN" "┌──────────────────────────────────────┐"
+    print_message "$CYAN" "│ $CURRENT_SECTION"
+    print_message "$CYAN" "└──────────────────────────────────────┘"
+}
+
+# 更新小节进度
+update_section_progress() {
+    SECTION_CURRENT=$((SECTION_CURRENT + 1))
+    show_section_progress $SECTION_CURRENT $SECTION_STEPS "$1"
+}
+
+# 完成小节
+end_section() {
+    echo ""
+    if [ "$1" = "success" ]; then
+        print_message "$GREEN" "✓ $CURRENT_SECTION 完成"
+    else
+        print_message "$RED" "✗ $CURRENT_SECTION 失败"
+    fi
+    echo ""
+}
+
+# 自动重试函数
+retry_command() {
+    local max_retries=$1
+    local delay=$2
+    local cmd="$3"
+    local description="$4"
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        if [ $retry_count -eq 0 ]; then
+            echo -n "  ↳ $description... "
+        else
+            echo -n "  ↳ $description (重试 $retry_count/$max_retries)... "
+        fi
+        
+        # 执行命令，隐藏输出，只捕获错误
+        if eval "$cmd" >> "$INSTALL_LOG" 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            sleep $delay
+        fi
+    done
+    
+    echo -e "${RED}✗${NC}"
+    return 1
+}
+
+# 静默安装函数（隐藏输出）
+silent_install() {
+    local cmd="$1"
+    local description="$2"
+    
+    echo -n "  ↳ $description... "
+    if eval "$cmd" >> "$INSTALL_LOG" 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+        return 0
+    else
+        echo -e "${RED}✗${NC}"
+        return 1
+    fi
+}
 
 # 打印带颜色的消息
 print_message() {
@@ -88,22 +216,27 @@ print_mofox_ascii() {
 
 # 检查是否以root权限运行
 check_root() {
+    echo -n "检查root权限... "
     if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}✗${NC}"
         print_message "$RED" "错误：此脚本必须以root权限运行！"
         print_message "$YELLOW" "请使用 'sudo bash $0' 或 'su -c \"bash $0\"'"
         exit 1
     fi
+    echo -e "${GREEN}✓${NC}"
 }
 
 # 检查系统架构
 check_architecture() {
+    echo -n "检查系统架构... "
     local arch
     arch=$(uname -m)
     case $arch in
         armv7l|armv8l|aarch64|arm64)
-            print_message "$GREEN" "✓ 系统架构支持: $arch"
+            echo -e "${GREEN}✓ ($arch)${NC}"
             ;;
         *)
+            echo -e "${RED}✗${NC}"
             print_message "$RED" "错误：不支持的架构: $arch"
             print_message "$YELLOW" "本脚本仅支持ARM架构的Armbian系统"
             exit 1
@@ -113,14 +246,15 @@ check_architecture() {
 
 # 检查操作系统
 check_os() {
+    echo -n "检查操作系统... "
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         if [[ "$ID" == "debian" && "$VERSION_ID" == "11" ]]; then
-            print_message "$GREEN" "✓ 检测到 Debian 11 (Bullseye)"
+            echo -e "${GREEN}✓ (Debian 11)${NC}"
         elif [[ "$ID" == "armbian" ]]; then
-            print_message "$GREEN" "✓ 检测到 Armbian 系统"
+            echo -e "${GREEN}✓ (Armbian)${NC}"
         else
-            print_message "$YELLOW" "⚠ 检测到 $PRETTY_NAME"
+            echo -e "${YELLOW}⚠ ($PRETTY_NAME)${NC}"
             print_message "$YELLOW" "本脚本主要针对Debian 11 Armbian系统，继续运行可能遇到兼容性问题。"
             read -p "是否继续？(y/N): " -n 1 -r
             echo
@@ -129,6 +263,7 @@ check_os() {
             fi
         fi
     else
+        echo -e "${RED}✗${NC}"
         print_message "$RED" "错误：无法检测操作系统信息"
         exit 1
     fi
@@ -136,41 +271,53 @@ check_os() {
 
 # 检查网络连接
 check_network() {
-    print_message "$BLUE" "检查网络连接..."
-    if ping -c 1 -W 2 google.com > /dev/null 2>&1; then
-        print_message "$GREEN" "✓ 网络连接正常"
+    echo -n "检查网络连接... "
+    if ping -c 1 -W 2 8.8.8.8 > /dev/null 2>&1; then
+        echo -e "${GREEN}✓${NC}"
     else
-        print_message "$YELLOW" "⚠ 无法连接到互联网，但将继续执行..."
+        echo -e "${YELLOW}⚠${NC}"
+        print_message "$YELLOW" "⚠ 网络连接可能存在问题，但将继续执行..."
     fi
 }
 
 # 系统更新
 update_system() {
-    print_header "更新系统软件包"
-    apt-get update
-    apt-get upgrade -y
-    apt-get autoremove -y
-    apt-get clean
+    start_section "系统更新" 3
+    
+    update_section_progress "更新软件包列表"
+    retry_command $MAX_RETRIES $RETRY_DELAY "apt-get update" "更新软件包列表" || {
+        end_section "error"
+        return 1
+    }
+    
+    update_section_progress "升级软件包"
+    silent_install "apt-get upgrade -y" "升级软件包" || {
+        end_section "error"
+        return 1
+    }
+    
+    update_section_progress "清理系统"
+    silent_install "apt-get autoremove -y && apt-get clean" "清理系统" || {
+        end_section "error"
+        return 1
+    }
+    
+    end_section "success"
+    return 0
 }
 
 # 安装依赖包
 install_dependencies() {
-    print_header "安装依赖包"
-    apt-get install -y \
-        curl \
-        wget \
-        git \
-        sudo \
-        build-essential \
-        software-properties-common \
-        apt-transport-https \
-        ca-certificates \
-        gnupg \
-        lsb-release \
-        net-tools \
-        htop \
-        vim \
-        nano
+    start_section "安装依赖包" 1
+    
+    update_section_progress "安装基础依赖"
+    silent_install "apt-get install -y curl wget git sudo build-essential software-properties-common apt-transport-https ca-certificates gnupg lsb-release net-tools htop vim nano" "安装基础依赖" || {
+        end_section "error"
+        return 1
+    }
+    
+    end_section "success"
+    return 0
 }
 
 # 选择安装的软件
@@ -196,6 +343,14 @@ select_software() {
     else
         print_message "$YELLOW" "✗ 跳过安装 coplar"
     fi
+    
+    # 计算总步骤数
+    TOTAL_STEPS=4  # 系统检查、更新、依赖、MoFox-Core
+    if [ "$INSTALL_NAPCATQQ" = true ]; then TOTAL_STEPS=$((TOTAL_STEPS + 1)); fi
+    if [ "$INSTALL_COPLAR" = true ]; then TOTAL_STEPS=$((TOTAL_STEPS + 1)); fi
+    if [ "$INSTALL_1PANLE" = true ]; then TOTAL_STEPS=$((TOTAL_STEPS + 1)); fi
+    
+    init_progress $TOTAL_STEPS
 }
 
 # 记录日志
@@ -205,760 +360,355 @@ log_message() {
 }
 
 # ============================================
-# 软件安装函数
+# 软件安装函数（优化版）
 # ============================================
 
 # 安装napcatqq
 install_napcatqq() {
-    print_header "安装 NapcatQQ"
-    log_message "开始安装 NapcatQQ"
+    start_section "安装 NapcatQQ" 4
     
-    print_message "$BLUE" "正在下载 NapcatQQ 安装脚本..."
-    
-    # 创建临时目录
+    update_section_progress "创建临时目录"
     mkdir -p "$TEMP_DIR/napcatqq"
-    cd "$TEMP_DIR/napcatqq" || exit 1
+    cd "$TEMP_DIR/napcatqq" || return 1
     
-    # 下载安装脚本
-    if curl -o napcat.sh https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh; then
-        print_message "$GREEN" "✓ NapcatQQ 安装脚本下载成功"
-    else
-        print_message "$RED" "✗ NapcatQQ 安装脚本下载失败"
-        log_message "NapcatQQ 安装脚本下载失败"
+    update_section_progress "下载安装脚本"
+    retry_command $MAX_RETRIES $RETRY_DELAY "curl -o napcat.sh https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh" "下载NapcatQQ安装脚本" || {
+        end_section "error"
         return 1
-    fi
+    }
     
-    # 使脚本可执行
+    update_section_progress "设置执行权限"
     chmod +x napcat.sh
     
-    print_message "$BLUE" "正在安装 NapcatQQ (不使用Docker，使用CLI模式)..."
-    log_message "执行NapcatQQ安装命令：--docker n --cli y"
-    
-    # 执行安装脚本
-    if bash napcat.sh --docker n --cli y; then
-        print_message "$GREEN" "✓ NapcatQQ 安装完成"
-        log_message "NapcatQQ 安装完成"
-        
-        # 显示安装后信息
-        echo ""
-        print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-        print_message "$CYAN" "║                                                          ║"
-        print_message "$GREEN" "║  NapcatQQ 安装成功！                                   ║"
-        print_message "$BLUE" "║                                                          ║"
-        print_message "$YELLOW" "║  重要信息：                                           ║"
-        print_message "$YELLOW" "║  1. 安装目录: /opt/NapCatQQ/                          ║"
-        print_message "$YELLOW" "║  2. 配置文件: /opt/NapCatQQ/config/config.yaml        ║"
-        print_message "$YELLOW" "║  3. 日志文件: /opt/NapCatQQ/logs/                     ║"
-        print_message "$BLUE" "║                                                          ║"
-        print_message "$YELLOW" "║  请编辑配置文件后启动服务：                            ║"
-        print_message "$YELLOW" "║  systemctl start napcatqq                             ║"
-        print_message "$CYAN" "║                                                          ║"
-        print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
-        echo ""
-        
-        # 检查服务状态
-        if systemctl is-active --quiet napcatqq; then
-            print_message "$GREEN" "✓ NapcatQQ 服务正在运行"
-        else
-            print_message "$YELLOW" "⚠ NapcatQQ 服务未运行，请手动启动"
-        fi
-        
-        return 0
-    else
-        print_message "$RED" "✗ NapcatQQ 安装失败"
-        log_message "NapcatQQ 安装失败"
+    update_section_progress "执行安装"
+    silent_install "bash napcat.sh --docker n --cli n" "安装NapcatQQ" || {
+        end_section "error"
         return 1
-    fi
+    }
+    
+    end_section "success"
+    
+    # 显示安装后信息
+    echo ""
+    print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+    print_message "$CYAN" "║                    NapcatQQ 安装成功                    ║"
+    print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    return 0
 }
 
 # 安装coplar
 install_coplar() {
-    print_header "安装 coplar (Cpolar内网穿透)"
-    log_message "开始安装 coplar"
+    start_section "安装 Cpolar" 2
     
-    print_message "$BLUE" "正在安装 coplar 内网穿透工具..."
-    log_message "开始执行coplar安装命令"
-    
-    # 记录开始时间
-    local start_time=$(date +%s)
-    
-    # 执行安装命令
-    if curl -L https://www.cpolar.com/static/downloads/install-release-cpolar.sh | sudo bash; then
-        local end_time=$(date +%s)
-        local duration=$((end_time - start_time))
-        
-        print_message "$GREEN" "✓ coplar 安装成功 (用时: ${duration}秒)"
-        log_message "coplar 安装成功，用时: ${duration}秒"
-        
-        # 检查安装结果
-        if command -v cpolar &> /dev/null; then
-            print_message "$GREEN" "✓ cpolar 命令已安装到系统路径"
-            
-            # 获取版本信息
-            local cpolar_version=$(cpolar version 2>/dev/null || echo "未知版本")
-            print_message "$BLUE" "  └── 版本: $cpolar_version"
-            
-            # 显示安装后信息
-            echo ""
-            print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-            print_message "$CYAN" "║                                                          ║"
-            print_message "$GREEN" "║  coplar (Cpolar) 安装成功！                            ║"
-            print_message "$BLUE" "║                                                          ║"
-            print_message "$YELLOW" "║  重要信息：                                           ║"
-            print_message "$YELLOW" "║  1. 配置文件: /usr/local/cpolar/cpolar.yml            ║"
-            print_message "$YELLOW" "║  2. 日志文件: /usr/local/cpolar/log/                  ║"
-            print_message "$YELLOW" "║  3. 二进制文件: /usr/local/bin/cpolar                 ║"
-            print_message "$BLUE" "║                                                          ║"
-            print_message "$YELLOW" "║  使用说明：                                           ║"
-            print_message "$YELLOW" "║  1. 配置认证令牌: cpolar authtoken <您的token>         ║"
-            print_message "$YELLOW" "║  2. 启动服务: systemctl start cpolar                  ║"
-            print_message "$YELLOW" "║  3. 开机自启: systemctl enable cpolar                 ║"
-            print_message "$YELLOW" "║  4. 状态检查: cpolar status                           ║"
-            print_message "$CYAN" "║                                                          ║"
-            print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
-            echo ""
-            
-            # 检查服务状态
-            if systemctl is-active --quiet cpolar; then
-                print_message "$GREEN" "✓ cpolar 服务正在运行"
-            else
-                print_message "$YELLOW" "⚠ cpolar 服务未运行，需要手动配置认证令牌后启动"
-                print_message "$YELLOW" "  请访问: https://dashboard.cpolar.com 获取认证令牌"
-            fi
-            
-            # 询问是否配置开机自启
-            read -p "是否设置 cpolar 开机自启？(Y/n): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
-                systemctl enable cpolar
-                print_message "$GREEN" "✓ cpolar 已设置开机自启"
-                log_message "cpolar 已设置开机自启"
-            fi
-            
-            return 0
-        else
-            print_message "$RED" "✗ cpolar 命令未找到，安装可能有问题"
-            log_message "cpolar 命令未找到，安装可能失败"
-            return 1
-        fi
-    else
-        print_message "$RED" "✗ coplar 安装失败"
-        log_message "coplar 安装失败"
+    update_section_progress "下载安装脚本"
+    retry_command $MAX_RETRIES $RETRY_DELAY "curl -L https://www.cpolar.com/static/downloads/install-release-cpolar.sh -o /tmp/install-cpolar.sh" "下载Cpolar安装脚本" || {
+        end_section "error"
         return 1
-    fi
+    }
+    
+    update_section_progress "执行安装"
+    silent_install "bash /tmp/install-cpolar.sh" "安装Cpolar" || {
+        end_section "error"
+        return 1
+    }
+    
+    end_section "success"
+    return 0
 }
 
 # 安装1panle
 install_1panle() {
-    print_header "安装 1Panel"
-    log_message "开始安装 1Panel"
+    start_section "安装 1Panel" 2
     
-    print_message "$BLUE" "正在安装 1Panel 服务器管理面板..."
-    log_message "开始执行1Panel安装命令"
-    
-    # 记录开始时间
-    local start_time=$(date +%s)
-    
-    # 检查是否已有1Panel在运行
+    # 检查现有服务
     if systemctl is-active --quiet 1panel; then
         print_message "$YELLOW" "⚠ 检测到1Panel服务已在运行"
-        read -p "是否继续安装（这将停止现有服务）？(y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_message "$YELLOW" "跳过1Panel安装"
-            log_message "用户取消1Panel安装（已有服务在运行）"
-            return 0
-        fi
+        end_section "skipped"
+        return 0
     fi
     
-    # 显示警告信息
+    update_section_progress "下载安装脚本"
+    retry_command $MAX_RETRIES $RETRY_DELAY "curl -sSL https://resource.fit2cloud.com/1panel/package/v2/quick_start.sh -o /tmp/1panel-install.sh" "下载1Panel安装脚本" || {
+        end_section "error"
+        return 1
+    }
+    
+    update_section_progress "执行安装"
     echo ""
     print_message "$YELLOW" "注意：1Panel安装需要较长时间，请耐心等待..."
-    print_message "$YELLOW" "安装过程中会下载Docker和相关组件"
-    print_message "$YELLOW" "在低性能设备上可能需要10-20分钟"
-    echo ""
+    print_message "$YELLOW" "安装过程输出将保存到日志文件"
     
-    # 询问是否继续
-    read -p "是否继续安装1Panel？(Y/n): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z "$REPLY" ]]; then
-        print_message "$YELLOW" "跳过1Panel安装"
-        log_message "用户取消1Panel安装"
-        return 0
-    fi
-    
-    # 执行安装命令
-    print_message "$BLUE" "正在下载并执行1Panel安装脚本..."
-    print_message "$YELLOW" "请勿中断此过程，否则可能导致安装不完整"
-    
-    if bash -c "$(curl -sSL https://resource.fit2cloud.com/1panel/package/v2/quick_start.sh)"; then
-        local end_time=$(date +%s)
-        local duration=$((end_time - start_time))
-        
-        print_message "$GREEN" "✓ 1Panel 安装成功 (用时: ${duration}秒)"
-        log_message "1Panel 安装成功，用时: ${duration}秒"
-        
-        # 显示安装后信息
-        echo ""
-        print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-        print_message "$CYAN" "║                                                          ║"
-        print_message "$GREEN" "║  1Panel 安装成功！                                     ║"
-        print_message "$BLUE" "║                                                          ║"
-        print_message "$YELLOW" "║  重要访问信息：                                       ║"
-        print_message "$YELLOW" "║  1. 访问地址: http://<服务器IP>:目标端口                ║"
-        print_message "$YELLOW" "║  2. 默认端口: 可能在安装过程中显示                      ║"
-        print_message "$YELLOW" "║  3. 用户名: 安装过程中设置                             ║"
-        print_message "$YELLOW" "║  4. 密码: 安装过程中设置                               ║"
-        print_message "$BLUE" "║                                                          ║"
-        print_message "$YELLOW" "║  管理命令：                                           ║"
-        print_message "$YELLOW" "║  1. 启动: systemctl start 1panel                      ║"
-        print_message "$YELLOW" "║  2. 停止: systemctl stop 1panel                       ║"
-        print_message "$YELLOW" "║  3. 状态: systemctl status 1panel                     ║"
-        print_message "$YELLOW" "║  4. 重启: systemctl restart 1panel                    ║"
-        print_message "$YELLOW" "║  5. 查看日志: journalctl -u 1panel -f                  ║"
-        print_message "$CYAN" "║                                                          ║"
-        print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
-        echo ""
-        
-        # 检查服务状态
-        sleep 5  # 等待服务启动
-        if systemctl is-active --quiet 1panel; then
-            print_message "$GREEN" "✓ 1Panel 服务正在运行"
-            
-            # 尝试获取访问信息
-            local panel_port=$(grep -i "port" /opt/1panel/conf/app.conf 2>/dev/null | grep -o '[0-9]*' | head -1)
-            if [ -n "$panel_port" ]; then
-                print_message "$BLUE" "  └── 服务端口: $panel_port"
-            fi
-            
-            # 获取本机IP
-            local server_ip=$(hostname -I | awk '{print $1}' | head -1)
-            if [ -n "$server_ip" ]; then
-                print_message "$BLUE" "  └── 服务器IP: $server_ip"
-                print_message "$GREEN" "访问地址: http://$server_ip:$panel_port"
-            fi
-        else
-            print_message "$YELLOW" "⚠ 1Panel 服务未运行，请手动启动"
-            print_message "$YELLOW" "执行: systemctl start 1panel"
-        fi
-        
-        # 询问是否配置开机自启
-        if ! systemctl is-enabled --quiet 1panel 2>/dev/null; then
-            read -p "是否设置 1Panel 开机自启？(Y/n): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z "$REPLY" ]]; then
-                systemctl enable 1panel
-                print_message "$GREEN" "✓ 1Panel 已设置开机自启"
-                log_message "1Panel 已设置开机自启"
-            fi
-        else
-            print_message "$GREEN" "✓ 1Panel 已配置开机自启"
-        fi
-        
+    if bash /tmp/1panel-install.sh >> "$INSTALL_LOG" 2>&1; then
+        end_section "success"
         return 0
     else
-        print_message "$RED" "✗ 1Panel 安装失败"
-        log_message "1Panel 安装失败"
-        
-        # 提供故障排查建议
-        echo ""
-        print_message "$YELLOW" "安装失败可能原因："
-        print_message "$YELLOW" "1. 网络连接问题"
-        print_message "$YELLOW" "2. 系统资源不足"
-        print_message "$YELLOW" "3. Docker安装失败"
-        print_message "$YELLOW" "4. 端口冲突"
-        echo ""
-        print_message "$YELLOW" "建议手动安装："
-        print_message "$YELLOW" "curl -sSL https://resource.fit2cloud.com/1panel/package/v2/quick_start.sh -o 1panel.sh"
-        print_message "$YELLOW" "bash 1panel.sh"
-        
+        end_section "error"
         return 1
     fi
 }
 
 # 安装mofox-core
 install_mofox() {
-    print_header "安装 MoFox-Core"
-    log_message "开始安装 MoFox-Core"
+    start_section "安装 MoFox-Core" 21
     
     local start_time=$(date +%s)
     
-    # 第一步：安装系统依赖包
-    print_message "$BLUE" "步骤 1: 安装系统依赖包"
-    if ! apt update; then
-        print_message "$RED" "✗ 软件包列表更新失败"
-        return 1
-    fi
+    # 步骤1：安装系统依赖
+    update_section_progress "安装系统依赖包"
+    silent_install "apt update && apt install -y sudo git curl python3 python3-pip python3-venv build-essential screen" "安装系统依赖包" || return 1
     
-    if ! apt install -y sudo git curl python3 python3-pip python3-venv build-essential screen; then
-        print_message "$RED" "✗ 系统依赖包安装失败"
-        return 1
-    fi
-    print_message "$GREEN" "✓ 系统依赖包安装成功"
+    # 步骤2：安装uv
+    update_section_progress "安装UV包管理器"
+    silent_install "pip3 install uv --break-system-packages -i https://repo.huaweicloud.com/repository/pypi/simple" "安装UV包管理器" || return 1
     
-    # 第二步：安装 uv
-    print_message "$BLUE" "步骤 2: 安装 UV Python包管理器"
-    if ! pip3 install uv --break-system-packages -i https://repo.huaweicloud.com/repository/pypi/simple; then
-        print_message "$RED" "✗ UV包管理器安装失败"
-        return 1
-    fi
-    print_message "$GREEN" "✓ UV包管理器安装成功"
-    
-    # 第三步：配置环境变量
-    print_message "$BLUE" "步骤 3: 配置环境变量"
+    # 步骤3：配置环境变量
+    update_section_progress "配置环境变量"
     if ! grep -q "\.local/bin" ~/.bashrc; then
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
     fi
     export PATH="$HOME/.local/bin:$PATH"
-    print_message "$GREEN" "✓ 环境变量配置完成"
     
-    # 第四步：验证依赖版本
-    print_message "$BLUE" "步骤 4: 验证依赖版本"
+    # 步骤4：验证Python版本
+    update_section_progress "验证Python版本"
     local python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
     local python_major=$(echo $python_version | cut -d'.' -f1)
     local python_minor=$(echo $python_version | cut -d'.' -f2)
     
     if [ "$python_major" -eq 3 ] && [ "$python_minor" -ge 11 ]; then
-        print_message "$GREEN" "✓ Python版本满足要求: $python_version"
+        echo -e "\r${GREEN}  ✓ Python版本满足要求: $python_version${NC}"
     else
-        print_message "$RED" "✗ Python版本不满足要求 (需要 >= 3.11, 当前: $python_version)"
+        echo -e "\r${RED}  ✗ Python版本不满足要求 (需要 >= 3.11, 当前: $python_version)${NC}"
         return 1
     fi
     
-    if ! command -v git &> /dev/null; then
-        print_message "$RED" "✗ Git未正确安装"
-        return 1
-    fi
-    print_message "$GREEN" "✓ Git安装成功"
-    
-    if ! command -v uv &> /dev/null; then
-        print_message "$RED" "✗ UV未正确安装"
-        return 1
-    fi
-    print_message "$GREEN" "✓ UV安装成功"
-    
-    # 第五步：创建工作目录
-    print_message "$BLUE" "步骤 5: 创建MoFox-Core工作目录"
-    cd ~ || {
-        print_message "$RED" "✗ 无法切换到用户主目录"
-        return 1
-    }
-    
+    # 步骤5：创建工作目录
+    update_section_progress "创建工作目录"
+    cd ~ || return 1
     mkdir -p MoFox_Bot_Deployment
-    cd MoFox_Bot_Deployment || {
-        print_message "$RED" "✗ 无法进入部署目录"
-        return 1
-    }
-    print_message "$GREEN" "✓ 工作目录创建成功: $(pwd)"
+    cd MoFox_Bot_Deployment || return 1
     
-    # 第六步：智能克隆MoFox-Core仓库
-    print_message "$BLUE" "步骤 6: 克隆MoFox-Core仓库"
+    # 步骤6：克隆仓库
+    update_section_progress "克隆MoFox-Core仓库"
+    retry_command $MAX_RETRIES $RETRY_DELAY "git clone https://github.com/MoFox-Studio/MoFox-Core.git" "克隆MoFox-Core仓库" || return 1
     
-    # GitHub源测速
-    declare -A github_sources=(
-        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
-        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
-    )
+    # 步骤7：进入项目目录
+    update_section_progress "进入项目目录"
+    cd MoFox-Core || return 1
     
-    # 测速函数
-    test_github_speed() {
-        local source_name=$1
-        local test_url=""
-        
-        case $source_name in
-            "direct") test_url="https://github.com" ;;
-            "ghproxy") test_url="https://ghproxy.com" ;;
-        esac
-        
-        local speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
-        local speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
-        echo "${speed_ms:-9999}"
-    }
-    
-    # 测速选择
-    local best_source="direct"
-    local best_speed=9999
-    
-    for source_name in "${!github_sources[@]}"; do
-        local speed=$(test_github_speed "$source_name")
-        if [ "$speed" -lt "$best_speed" ]; then
-            best_speed="$speed"
-            best_source="$source_name"
-        fi
-    done
-    
-    local selected_url="${github_sources[$best_source]}"
-    
-    # 克隆仓库
-    if ! git clone "$selected_url"; then
-        print_message "$RED" "✗ MoFox-Core仓库克隆失败"
-        return 1
-    fi
-    print_message "$GREEN" "✓ MoFox-Core仓库克隆成功"
-    
-    # 第七步：进入项目目录
-    print_message "$BLUE" "步骤 7: 进入MoFox-Core目录"
-    if [ ! -d "MoFox-Core" ]; then
-        print_message "$RED" "✗ MoFox-Core目录不存在"
-        return 1
-    fi
-    
-    cd MoFox-Core || {
-        print_message "$RED" "✗ 无法进入MoFox-Core目录"
-        return 1
-    }
-    
-    # 验证项目目录
-    if [ ! -f "requirements.txt" ]; then
-        print_message "$RED" "✗ 当前目录不是有效的MoFox-Core项目目录"
-        return 1
-    fi
-    print_message "$GREEN" "✓ 已进入项目目录: $(pwd)"
-    
-    # 第八步：智能安装Python依赖
-    print_message "$BLUE" "步骤 8: 安装Python依赖"
-    
-    # 依赖安装重试函数
-    install_with_retry() {
-        local dep="$1"
-        
-        # 方法1: uv + 阿里云镜像
-        if uv pip install "$dep" -i https://mirrors.aliyun.com/pypi/simple; then
-            return 0
-        fi
-        
-        # 方法2: uv + copy模式
-        if uv pip install --link-mode copy "$dep" -i https://mirrors.aliyun.com/pypi/simple; then
-            return 0
-        fi
-        
-        # 方法3: 环境变量方式
-        if UV_LINK_MODE=copy uv pip install "$dep" -i https://mirrors.aliyun.com/pypi/simple; then
-            return 0
-        fi
-        
-        return 1
-    }
-    
-    # 批量安装尝试
-    if ! UV_LINK_MODE=copy uv pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple; then
-        print_message "$YELLOW" "批量安装失败，开始逐个安装..."
-        
-        # 预处理requirements.txt
-        local temp_req="/tmp/mofox_requirements_clean.txt"
-        grep -E '^[^#]' requirements.txt | grep -v '^$' > "$temp_req"
-        
-        local success_count=0
-        local fail_count=0
-        local total_to_install=$(wc -l < "$temp_req")
-        
-        while IFS= read -r dep_line; do
-            local dep=$(echo "$dep_line" | sed 's/[<>=!].*//' | xargs)
-            
-            if [ -z "$dep" ]; then
-                continue
-            fi
-            
-            if install_with_retry "$dep"; then
-                ((success_count++))
-                print_message "$GREEN" "  ✓ $dep"
-            else
-                ((fail_count++))
-                print_message "$RED" "  ✗ $dep"
-            fi
-            
-        done < "$temp_req"
-        
-        rm -f "$temp_req"
-        
-        if [ $fail_count -gt $((total_to_install / 2)) ]; then
-            print_message "$RED" "✗ 超过半数依赖安装失败"
-            return 1
-        fi
-        
-        print_message "$GREEN" "✓ 依赖安装完成: $success_count/$total_to_install 成功"
+    # 步骤8：创建虚拟环境（关键步骤）
+    update_section_progress "创建虚拟环境"
+    echo -n "  ↳ 创建Python虚拟环境... "
+    if uv venv --python python3 >> "$INSTALL_LOG" 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+        echo -e "\r${GREEN}  ✓ 虚拟环境创建成功: .venv/${NC}"
     else
-        print_message "$GREEN" "✓ 依赖安装成功"
-    fi
-    
-    # 第九步：配置环境文件
-    print_message "$BLUE" "步骤 9: 配置环境文件"
-    if [ ! -f "template/template.env" ]; then
-        print_message "$RED" "✗ 未找到环境模板文件: template/template.env"
+        echo -e "${RED}✗${NC}"
+        print_message "$RED" "虚拟环境创建失败"
         return 1
     fi
     
-    cp template/template.env .env
-    print_message "$GREEN" "✓ 环境文件创建成功"
+    # 步骤9：在虚拟环境中安装Python依赖（关键修正！）
+    update_section_progress "安装Python依赖"
+    echo -n "  ↳ 在虚拟环境中安装Python依赖... "
     
-    # 第十步：用户协议确认
-    print_message "$BLUE" "步骤 10: 用户协议确认"
-    
-    show_eula() {
-        clear
-        print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-        print_message "$CYAN" "║                  MoFox-Core 用户协议                      ║"
-        print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
-        print_message "$YELLOW" "║  重要声明：                                            ║"
-        print_message "$YELLOW" "║  1. 本软件仅供学习和研究使用                          ║"
-        print_message "$YELLOW" "║  2. 禁止用于任何违法用途                              ║"
-        print_message "$YELLOW" "║  3. 使用者需遵守当地法律法规                          ║"
-        print_message "$YELLOW" "║  4. 开发者不承担任何使用责任                          ║"
-        print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
-        echo ""
-    }
-    
-    show_eula
-    
-    read -p "您是否同意以上用户协议？(Y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        print_message "$RED" "✗ 您必须同意用户协议才能使用 MoFox-Core"
-        return 1
+    # 方法1：使用 uv run 在虚拟环境中运行 pip
+    if uv run --virtualenv .venv pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境)${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+        
+        # 方法2：使用 uv 直接安装到虚拟环境
+        echo -n "  ↳ 尝试使用 uv 直接安装到虚拟环境... "
+        if uv pip install --python .venv/bin/python -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用--python参数)${NC}"
+        else
+            echo -e "${RED}✗${NC}"
+            
+            # 方法3：直接使用虚拟环境中的pip
+            echo -n "  ↳ 尝试使用虚拟环境中的pip... "
+            if .venv/bin/pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+                echo -e "${GREEN}✓${NC}"
+                echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用.venv/bin/pip)${NC}"
+            else
+                echo -e "${RED}✗${NC}"
+                print_message "$RED" "依赖安装完全失败"
+                return 1
+            fi
+        fi
     fi
     
-    # 更新.env文件中的EULA_CONFIRMED值
+    # 步骤10：配置环境文件（使用虚拟环境中的Python）
+    update_section_progress "配置环境文件"
+    cp template/template.env .env 2>> "$INSTALL_LOG"
+    if [ $? -eq 0 ]; then
+        echo -e "\r${GREEN}  ✓ 环境文件创建成功${NC}"
+    else
+        echo -e "\r${RED}  ✗ 环境文件创建失败${NC}"
+        print_message "$YELLOW" "继续安装，但部分配置可能需要手动完成"
+    fi
+    
+    # 步骤11：用户协议确认
+    update_section_progress "确认用户协议"
     sed -i 's/^EULA_CONFIRMED=.*/EULA_CONFIRMED=true/' .env
-    print_message "$GREEN" "✓ 用户协议已确认"
+    echo -e "\r${GREEN}  ✓ 用户协议已确认${NC}"
     
-    # 第十一步：创建config目录
-    print_message "$BLUE" "步骤 11: 创建config目录"
+    # 步骤12：创建config目录
+    update_section_progress "创建配置目录"
     mkdir -p config
-    print_message "$GREEN" "✓ config目录创建成功"
+    echo -e "\r${GREEN}  ✓ config目录创建成功${NC}"
     
-    # 第十二步：复制机器人配置文件模板
-    print_message "$BLUE" "步骤 12: 配置机器人配置文件"
-    if [ ! -f "template/bot_config_template.toml" ]; then
-        print_message "$RED" "✗ 未找到机器人配置模板: template/bot_config_template.toml"
-        return 1
+    # 步骤13：配置机器人文件
+    update_section_progress "配置机器人文件"
+    if [ -f "template/bot_config_template.toml" ]; then
+        cp template/bot_config_template.toml config/bot_config.toml 2>> "$INSTALL_LOG"
+        echo -e "\r${GREEN}  ✓ 机器人配置文件创建成功${NC}"
+    else
+        echo -e "\r${YELLOW}  ⚠ 未找到机器人配置模板${NC}"
     fi
     
-    cp template/bot_config_template.toml config/bot_config.toml
-    print_message "$GREEN" "✓ 机器人配置文件创建成功"
-    
-    # 第十三步：配置机器人QQ账号
-    print_message "$BLUE" "步骤 13: 配置机器人QQ账号"
-    local config_file="config/bot_config.toml"
-    
+    # 步骤14：配置QQ账号
+    update_section_progress "配置机器人QQ"
     echo ""
     read -p "请输入机器人的QQ号 (9-11位数字): " qq_number
     
-    if [[ ! "$qq_number" =~ ^[0-9]{9,11}$ ]]; then
-        print_message "$RED" "✗ QQ号格式错误: $qq_number"
-        return 1
-    fi
-    
-    # 更新配置文件
-    if grep -q "^\s*qq_account\s*=" "$config_file"; then
-        sed -i "s/^\s*qq_account\s*=.*/qq_account = $qq_number/" "$config_file"
+    if [[ "$qq_number" =~ ^[0-9]{9,11}$ ]]; then
+        local config_file="config/bot_config.toml"
+        if [ -f "$config_file" ]; then
+            sed -i "s/^\s*qq_account\s*=.*/qq_account = $qq_number/" "$config_file" 2>> "$INSTALL_LOG"
+            sed -i "s/^\s*platform\s*=.*/platform = \"qq\"/" "$config_file" 2>> "$INSTALL_LOG"
+            echo -e "\r${GREEN}  ✓ 机器人QQ号配置成功: $qq_number${NC}"
+        else
+            echo -e "\r${YELLOW}  ⚠ 配置文件不存在，跳过QQ配置${NC}"
+        fi
     else
-        sed -i "/^\s*\[bot\]/a qq_account = $qq_number" "$config_file"
+        echo -e "\r${YELLOW}  ⚠ QQ号格式错误，跳过配置${NC}"
     fi
     
-    # 确保platform设置为"qq"
-    if grep -q "^\s*platform\s*=" "$config_file"; then
-        sed -i "s/^\s*platform\s*=.*/platform = \"qq\"/" "$config_file"
-    else
-        sed -i "/^\s*qq_account\s*=/i platform = \"qq\"" "$config_file"
-    fi
-    
-    print_message "$GREEN" "✓ 机器人QQ号配置成功: $qq_number"
-    
-    # 第十四步：配置主人QQ账号
-    print_message "$BLUE" "步骤 14: 配置主人QQ账号"
-    
+    # 步骤15：配置主人QQ
+    update_section_progress "配置主人QQ"
     echo ""
     read -p "请输入主人QQ号 (9-11位数字): " master_qq
     
-    if [[ ! "$master_qq" =~ ^[0-9]{9,11}$ ]]; then
-        print_message "$RED" "✗ QQ号格式错误: $master_qq"
-        return 1
-    fi
-    
-    # 构建新的master_users配置
-    local new_master_config="master_users = [[\"qq\", \"$master_qq\"]]"
-    
-    if grep -q "^\s*\[permission\]" "$config_file"; then
-        if grep -q "^\s*master_users\s*=" "$config_file"; then
-            sed -i "s/^\s*master_users\s*=.*/$new_master_config/" "$config_file"
+    if [[ "$master_qq" =~ ^[0-9]{9,11}$ ]]; then
+        local new_master_config="master_users = [[\"qq\", \"$master_qq\"]]"
+        if grep -q "^\s*\[permission\]" "$config_file"; then
+            sed -i "/^\s*\[permission\]/a $new_master_config" "$config_file" 2>> "$INSTALL_LOG"
         else
-            sed -i "/^\s*\[permission\]/a $new_master_config" "$config_file"
+            echo -e "\n[permission]\n$new_master_config" >> "$config_file"
         fi
+        echo -e "\r${GREEN}  ✓ 主人QQ号配置成功: $master_qq${NC}"
     else
-        echo "" >> "$config_file"
-        echo "[permission]" >> "$config_file"
-        echo "$new_master_config" >> "$config_file"
+        echo -e "\r${YELLOW}  ⚠ 主人QQ号格式错误，跳过配置${NC}"
     fi
     
-    print_message "$GREEN" "✓ 主人QQ号配置成功: $master_qq"
-    
-    # 第十五步：复制模型配置文件
-    print_message "$BLUE" "步骤 15: 配置模型配置文件"
-    if [ ! -f "template/model_config_template.toml" ]; then
-        print_message "$RED" "✗ 未找到模型配置模板: template/model_config_template.toml"
-        return 1
+    # 步骤16：配置模型文件
+    update_section_progress "配置模型文件"
+    if [ -f "template/model_config_template.toml" ]; then
+        cp template/model_config_template.toml config/model_config.toml 2>> "$INSTALL_LOG"
+        echo -e "\r${GREEN}  ✓ 模型配置文件创建成功${NC}"
+    else
+        echo -e "\r${YELLOW}  ⚠ 未找到模型配置模板${NC}"
     fi
     
-    cp template/model_config_template.toml config/model_config.toml
-    
-    # 配置硅基流动API
+    # 步骤17：配置API密钥
+    update_section_progress "配置API密钥"
     echo ""
-    print_message "$CYAN" "硅基流动(SiliconFlow) API配置"
     read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
     
-    if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ]; then
-        # 更新API密钥
-        if grep -q '^\s*\[\[api_providers\]\]' "config/model_config.toml"; then
-            # 查找并更新硅基流动配置
-            local line_num=0
-            local in_siliconflow=0
-            
-            while IFS= read -r line; do
-                ((line_num++))
-                
-                if [[ "$line" =~ ^[[:space:]]*\[\[api_providers\]\][[:space:]]*$ ]]; then
-                    in_siliconflow=0
-                fi
-                
-                if [[ "$line" =~ ^[[:space:]]*name[[:space:]]*=[[:space:]]*\"siliconflow\" ]]; then
-                    in_siliconflow=1
-                fi
-                
-                if [ $in_siliconflow -eq 1 ] && [[ "$line" =~ ^[[:space:]]*api_key[[:space:]]*= ]]; then
-                    sed -i "${line_num}s/api_key\s*=.*/api_key = \"${api_key}\"/" "config/model_config.toml"
-                    break
-                fi
-            done < "config/model_config.toml"
+    if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ] && [ -n "$api_key" ]; then
+        if [ -f "config/model_config.toml" ]; then
+            # 简化API密钥配置
+            sed -i '0,/api_key\s*=/s/api_key\s*=.*/api_key = "'"$api_key"'"/' config/model_config.toml 2>> "$INSTALL_LOG"
+            echo -e "\r${GREEN}  ✓ API密钥配置成功${NC}"
+        else
+            echo -e "\r${YELLOW}  ⚠ 模型配置文件不存在，跳过API配置${NC}"
         fi
-        print_message "$GREEN" "✓ 硅基流动API密钥配置成功"
     else
-        print_message "$YELLOW" "⚠ 跳过API密钥配置"
+        echo -e "\r${YELLOW}  ⚠ 跳过API密钥配置${NC}"
     fi
     
-    # 第十六步：验证环境
-    print_message "$BLUE" "步骤 16: 验证安装环境"
-    
-    # 验证项目目录
-    local project_files=("pyproject.toml" "requirements.txt" "README.md")
-    local found_files=0
-    
-    for file in "${project_files[@]}"; do
-        if [ -e "$file" ]; then
-            ((found_files++))
-        fi
-    done
-    
-    if [ $found_files -lt 2 ]; then
-        print_message "$RED" "✗ 当前目录不是有效的MoFox-Core项目目录"
-        return 1
-    fi
-    print_message "$GREEN" "✓ 项目目录验证通过"
-    
-    # 验证Python环境
-    if ! command -v python3 &> /dev/null; then
-        print_message "$RED" "✗ Python3未安装"
-        return 1
-    fi
-    print_message "$GREEN" "✓ Python环境验证通过"
-    
-    # 第十七步：配置Napcat适配器插件
-    print_message "$BLUE" "步骤 17: 配置Napcat适配器插件"
-    local plugin_config="config/plugins/napcat_adapter/config.toml"
-    
-    if [ ! -f "$plugin_config" ]; then
-        print_message "$RED" "✗ 未找到Napcat适配器配置文件"
-        return 1
+    # 步骤18：验证环境
+    update_section_progress "验证安装环境"
+    if [ -f ".venv/bin/python" ] && [ -f "pyproject.toml" ]; then
+        # 使用虚拟环境中的Python验证版本
+        local venv_python_version=$(.venv/bin/python --version 2>&1 | cut -d' ' -f2)
+        echo -e "\r${GREEN}  ✓ 虚拟环境Python版本: $venv_python_version${NC}"
+        echo -e "\r${GREEN}  ✓ 项目目录验证通过${NC}"
+    else
+        echo -e "\r${YELLOW}  ⚠ 环境验证警告${NC}"
     fi
     
-    # 启用适配器
-    if grep -q "^\s*\[plugin\]" "$plugin_config"; then
-        sed -i "/^\s*\[plugin\]/,/^\[/ s/^\s*enabled\s*=.*/enabled = true/" "$plugin_config"
+    # 步骤19：配置Napcat插件
+    update_section_progress "配置Napcat插件"
+    mkdir -p config/plugins/napcat_adapter
+    if [ -f "template/plugins/napcat_adapter/config.toml" ]; then
+        cp template/plugins/napcat_adapter/config.toml config/plugins/napcat_adapter/
+        sed -i 's/enabled = false/enabled = true/' config/plugins/napcat_adapter/config.toml 2>> "$INSTALL_LOG"
+        echo -e "\r${GREEN}  ✓ Napcat插件配置成功${NC}"
+    elif [ -f "plugins/napcat_adapter/template_config.toml" ]; then
+        cp plugins/napcat_adapter/template_config.toml config/plugins/napcat_adapter/config.toml
+        echo -e "\r${GREEN}  ✓ Napcat插件配置成功${NC}"
+    else
+        echo -e "\r${YELLOW}  ⚠ 未找到Napcat插件模板，跳过配置${NC}"
     fi
-    print_message "$GREEN" "✓ Napcat适配器已启用"
     
-    # 第十八步：配置Napcat服务器端口
-    print_message "$BLUE" "步骤 18: 配置Napcat服务器端口"
-    
-    if ! grep -q "^\s*\[napcat_server\]" "$plugin_config"; then
-        print_message "$RED" "✗ 未找到[napcat_server]配置节"
-        return 1
-    fi
-    
-    # 获取当前端口
-    local current_port=$(grep -E "^\s*port\s*=" "$plugin_config" | head -1 | sed 's/.*=\s*//' | tr -d '[:space:]')
-    
+    # 步骤20：配置端口
+    update_section_progress "配置服务端口"
     echo ""
-    print_message "$YELLOW" "当前Napcat服务器端口: $current_port"
-    read -p "是否需要修改端口？(y/N): " -n 1 -r
-    echo
+    read -p "请输入Napcat服务器端口 (默认: 8080): " port
+    port=${port:-8080}
     
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "请输入新的端口号 (1024-65535): " new_port
-        
-        if [[ ! "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1024 ] || [ "$new_port" -gt 65535 ]; then
-            print_message "$RED" "✗ 端口号无效"
-            return 1
+    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
+        local plugin_config="config/plugins/napcat_adapter/config.toml"
+        if [ -f "$plugin_config" ]; then
+            sed -i "s/port = .*/port = $port/" "$plugin_config" 2>> "$INSTALL_LOG"
+            echo -e "\r${GREEN}  ✓ 端口配置成功: $port${NC}"
+        else
+            echo -e "\r${YELLOW}  ⚠ 插件配置文件不存在，端口配置失败${NC}"
         fi
-        
-        # 更新端口配置
-        sed -i "s/^\s*port\s*=.*/port = $new_port/" "$plugin_config"
-        print_message "$GREEN" "✓ 端口已更新为: $new_port"
     else
-        print_message "$GREEN" "✓ 保持当前端口: $current_port"
+        echo -e "\r${YELLOW}  ⚠ 端口号无效，使用默认端口: 8080${NC}"
     fi
     
-    # 第十九步：首次运行测试
-    print_message "$BLUE" "步骤 19: 首次运行测试"
-    
-    local bot_file="bot.py"
-    if [ ! -f "$bot_file" ]; then
-        print_message "$YELLOW" "⚠ 未找到bot.py，跳过首次运行测试"
+    # 步骤21：测试虚拟环境（新增）
+    update_section_progress "测试虚拟环境"
+    echo -n "  ↳ 验证虚拟环境是否可以运行Python... "
+    if .venv/bin/python -c "import sys; print('Python', sys.version)" >> "$INSTALL_LOG" 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+        echo -e "\r${GREEN}  ✓ 虚拟环境测试通过${NC}"
     else
-        echo ""
-        print_message "$CYAN" "首次运行测试 (5分钟后自动停止，或按 Ctrl+C 手动退出)"
-        read -p "是否开始测试？(Y/n): " -n 1 -r
-        echo
-        
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            print_message "$YELLOW" "正在启动MoFox-Core，请稍候..."
-            
-            # 创建测试日志
-            local test_log="logs/first_run_test_$(date +%Y%m%d_%H%M%S).log"
-            mkdir -p logs
-            
-            # 运行测试（5分钟超时）
-            timeout 300 uv run python "$bot_file" 2>&1 | tee "$test_log" &
-            local test_pid=$!
-            
-            # 等待测试完成
-            wait $test_pid 2>/dev/null
-            
-            print_message "$GREEN" "✓ 首次运行测试完成"
-            print_message "$BLUE" "测试日志: $test_log"
-        fi
+        echo -e "${RED}✗${NC}"
+        echo -e "\r${YELLOW}  ⚠ 虚拟环境测试失败${NC}"
     fi
     
-    # 安装完成
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     
+    end_section "success"
+    
+    # 显示完成信息
     echo ""
     print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-    print_message "$CYAN" "║                  MoFox-Core 安装完成                     ║"
+    print_message "$CYAN" "║                    MoFox-Core 安装完成                   ║"
     print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
-    print_message "$GREEN" "║  ✓ 总用时: ${duration}秒                               ║"
-    print_message "$GREEN" "║  ✓ 项目目录: $(pwd)                                   ║"
-    print_message "$GREEN" "║  ✓ 配置文件: config/ 目录                              ║"
-    print_message "$GREEN" "║  ✓ 依赖安装: 完成                                      ║"
-    print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
-    print_message "$YELLOW" "║  下一步操作:                                          ║"
-    print_message "$YELLOW" "║  1. 启动: uv run python bot.py                        ║"
-    print_message "$YELLOW" "║  2. 后台: screen -S mofox uv run python bot.py        ║"
-    print_message "$YELLOW" "║  3. 日志: tail -f logs/mofox.log                      ║"
+    print_message "$GREEN" "║  总用时: ${duration}秒                                 ║"
+    print_message "$GREEN" "║  项目目录: $(pwd)                                     ║"
+    print_message "$GREEN" "║  虚拟环境: .venv/                                      ║"
+    print_message "$CYAN" "║                                                          ║"
+    print_message "$YELLOW" "║  重要: 所有依赖已安装在虚拟环境中                    ║"
+    print_message "$YELLOW" "║                                                          ║"
+    print_message "$YELLOW" "║  启动方式:                                            ║"
+    print_message "$YELLOW" "║  1. 手动激活虚拟环境: source .venv/bin/activate        ║"
+    print_message "$YELLOW" "║  2. 然后运行: python bot.py                            ║"
+    print_message "$YELLOW" "║                                                          ║"
+    print_message "$YELLOW" "║  或使用完整路径直接运行:                              ║"
+    print_message "$YELLOW" "║  .venv/bin/python bot.py                               ║"
     print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
     echo ""
-    
-    log_message "MoFox-Core安装完成，总用时: ${duration}秒"
     
     return 0
 }
@@ -980,34 +730,17 @@ clear
 print_mofox_ascii
 print_header "$SCRIPT_NAME v$SCRIPT_VERSION"
 
-# 显示自定义欢迎语
+# 显示优化说明
 echo ""
-print_message "$CYAN" "╔═══════════════════════════════════════════════════════════════╗"
-print_message "$CYAN" "║                                                               ║"
-print_message "$GREEN" "║   此脚本由牡丹江市第一高级中学ACG社2023级社长越渊制作。        ║"
-print_message "$BLUE" "║                                                               ║"
-print_message "$YELLOW" "║   感谢您的使用，此脚本将进行以下软件的一键部署安装：           ║"
-print_message "$YELLOW" "║                                                               ║"
-print_message "$MAGENTA" "║   • MoFox-Core                                               ║"
-print_message "$MAGENTA" "║   • NapcatQQ                                                ║"
-print_message "$MAGENTA" "║   • 1panle (可选)                                           ║"
-print_message "$MAGENTA" "║   • coplar (可选)                                           ║"
-print_message "$BLUE" "║                                                               ║"
-print_message "$YELLOW" "║   并进行开机自启配置                                         ║"
-print_message "$CYAN" "║                                                               ║"
-print_message "$CYAN" "╚═══════════════════════════════════════════════════════════════╝"
-echo ""
-
-# 显示兼容性说明
-print_message "$BLUE" "╔══════════════════════════════════════════════════════════╗"
-print_message "$BLUE" "║                                                          ║"
-print_message "$YELLOW" "║  兼容性说明：                                          ║"
-print_message "$GREEN" "║  此脚本理论适用于所有主流Linux发行版                     ║"
-print_message "$GREEN" "║  脚本优化和构建基于 Debian 11 Armbian                   ║"
-print_message "$BLUE" "║                                                          ║"
-print_message "$YELLOW" "║  注意：在其他发行版上运行时可能需要手动调整依赖包       ║"
-print_message "$BLUE" "║                                                          ║"
-print_message "$BLUE" "╚══════════════════════════════════════════════════════════╝"
+print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+print_message "$CYAN" "║                     优化功能说明                         ║"
+print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
+print_message "$GREEN" "║  ✓ 自动重试机制 (最大重试: $MAX_RETRIES 次)              ║"
+print_message "$GREEN" "║  ✓ 进度条显示 (总进度 + 小节进度)                        ║"
+print_message "$GREEN" "║  ✓ 静默安装 (依赖安装输出已隐藏)                         ║"
+print_message "$GREEN" "║  ✓ 详细日志记录: $INSTALL_LOG                     ║"
+print_message "$GREEN" "║  ✓ 虚拟环境支持 (自动创建和配置)                         ║"
+print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
 # 等待用户确认
@@ -1018,35 +751,56 @@ if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z "$REPLY" ]]; then
     exit 0
 fi
 
-# 系统检查
+# ============================================
+# 系统检查和准备
+# ============================================
 print_header "系统检查"
+
+CURRENT_STEP=1
+show_main_progress $CURRENT_STEP $TOTAL_STEPS "系统检查"
+
 check_root
 check_os
 check_architecture
 check_network
 
-# 系统更新和依赖安装
-update_system
-install_dependencies
-
-# 选择安装的软件
+# 选择安装软件
 select_software
 
-print_message "$GREEN" "✓ 系统检查和准备工作完成"
-log_message "系统检查完成，准备开始软件安装"
+# ============================================
+# 系统更新
+# ============================================
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_main_progress $CURRENT_STEP $TOTAL_STEPS "系统更新"
+update_system || {
+    print_message "$RED" "系统更新失败，安装终止"
+    exit 1
+}
 
 # ============================================
-# 开始软件安装
+# 安装依赖
 # ============================================
-print_header "开始软件安装"
+CURRENT_STEP=$((CURRENT_STEP + 1))
+show_main_progress $CURRENT_STEP $TOTAL_STEPS "安装依赖包"
+install_dependencies || {
+    print_message "$RED" "依赖安装失败，安装终止"
+    exit 1
+}
+
+# ============================================
+# 软件安装
+# ============================================
+print_header "软件安装"
 
 # 安装NapcatQQ
 if [ "$INSTALL_NAPCATQQ" = true ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_main_progress $CURRENT_STEP $TOTAL_STEPS "安装 NapcatQQ"
     if ! install_napcatqq; then
         print_message "$RED" "✗ NapcatQQ安装失败"
         log_message "NapcatQQ安装失败"
         # 询问是否继续
-        read -p "NapcatQQ安装失败，是否继续安装其他软件？(Y/n): " -n 1 -r
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
             exit 1
@@ -1056,11 +810,13 @@ fi
 
 # 安装coplar
 if [ "$INSTALL_COPLAR" = true ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_main_progress $CURRENT_STEP $TOTAL_STEPS "安装 Cpolar"
     if ! install_coplar; then
         print_message "$RED" "✗ coplar安装失败"
         log_message "coplar安装失败"
         # 询问是否继续
-        read -p "coplar安装失败，是否继续安装其他软件？(Y/n): " -n 1 -r
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
             exit 1
@@ -1070,11 +826,13 @@ fi
 
 # 安装1panle
 if [ "$INSTALL_1PANLE" = true ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_main_progress $CURRENT_STEP $TOTAL_STEPS "安装 1Panel"
     if ! install_1panle; then
         print_message "$RED" "✗ 1panle安装失败"
         log_message "1panle安装失败"
         # 询问是否继续
-        read -p "1panle安装失败，是否继续安装其他软件？(Y/n): " -n 1 -r
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
             exit 1
@@ -1084,6 +842,8 @@ fi
 
 # 安装MoFox-Core
 if [ "$INSTALL_MOFOX" = true ]; then
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    show_main_progress $CURRENT_STEP $TOTAL_STEPS "安装 MoFox-Core"
     if ! install_mofox; then
         print_message "$RED" "✗ MoFox-Core安装失败"
         log_message "MoFox-Core安装失败"
@@ -1098,15 +858,40 @@ END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 print_header "安装完成"
-echo "所有选定的软件安装已完成！"
+show_main_progress $TOTAL_STEPS $TOTAL_STEPS "安装完成"
+
 echo ""
-echo "安装总结:"
-echo "  - 总用时: $DURATION 秒"
-echo "  - 日志文件: $INSTALL_LOG"
+print_message "$GREEN" "╔══════════════════════════════════════════════════════════╗"
+print_message "$GREEN" "║                     安装完成总结                         ║"
+print_message "$GREEN" "╠══════════════════════════════════════════════════════════╣"
+print_message "$CYAN" "║  总用时: $DURATION 秒                                    ║"
+print_message "$CYAN" "║  日志文件: $INSTALL_LOG                           ║"
+print_message "$CYAN" "║                                                          ║"
+print_message "$YELLOW" "║  安装的软件:                                          ║"
+[ "$INSTALL_MOFOX" = true ] && print_message "$YELLOW" "║    • MoFox-Core                                      ║"
+[ "$INSTALL_NAPCATQQ" = true ] && print_message "$YELLOW" "║    • NapcatQQ                                       ║"
+[ "$INSTALL_1PANLE" = true ] && print_message "$YELLOW" "║    • 1Panel                                         ║"
+[ "$INSTALL_COPLAR" = true ] && print_message "$YELLOW" "║    • Cpolar                                         ║"
+print_message "$GREEN" "╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "请检查上方是否有错误信息。"
-echo "建议重启系统以确保所有服务正常运行。"
+echo "安装完成！请按照以下步骤操作："
 echo ""
+[ "$INSTALL_MOFOX" = true ] && echo "1. MoFox-Core: 进入 ~/MoFox_Bot_Deployment/MoFox-Core 目录"
+[ "$INSTALL_MOFOX" = true ] && echo "   激活虚拟环境: source .venv/bin/activate"
+[ "$INSTALL_MOFOX" = true ] && echo "   启动机器人: python bot.py"
+echo ""
+[ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 编辑 /opt/NapCatQQ/config/config.yaml 配置文件"
+[ "$INSTALL_NAPCATQQ" = true ] && echo "   启动服务: systemctl start napcatqq"
+echo ""
+[ "$INSTALL_1PANLE" = true ] && echo "3. 1Panel: 访问 http://<服务器IP>:目标端口"
+[ "$INSTALL_1PANLE" = true ] && echo "   使用安装时设置的用户名和密码登录"
+echo ""
+[ "$INSTALL_COPLAR" = true ] && echo "4. Cpolar: 配置认证令牌: cpolar authtoken <您的token>"
+[ "$INSTALL_COPLAR" = true ] && echo "   启动服务: systemctl start cpolar"
+echo ""
+print_message "$YELLOW" "建议重启系统以确保所有服务正常运行。"
+echo ""
+
 log_message "脚本执行完成，总用时: $DURATION 秒"
 
 # 询问是否重启
