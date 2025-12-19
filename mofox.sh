@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.1.0
+# 版本：2.2.0
 # ============================================
 
 # 脚本功能说明：
@@ -214,6 +214,8 @@ print_mofox_ascii() {
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
 }
 
+
+
 # 检查是否以root权限运行
 check_root() {
     echo -n "检查root权限... "
@@ -226,53 +228,130 @@ check_root() {
     echo -e "${GREEN}✓${NC}"
 }
 
+#系统性能检查
+check_system_resources_strict() {
+    local required_storage=8  # 8GB
+    local required_memory=1024  # 1024MB
+    local has_error=0
+    
+    echo "检查系统资源（严格模式）..."
+    
+    # 检查存储空间
+    echo -n "  检查存储空间 (最低 ${required_storage}GB)... "
+    local available_kb
+    available_kb=$(df -k / | awk 'NR==2 {print $4}')
+    local available_gb=$((available_kb / 1024 / 1024))
+    
+    if [ "$available_gb" -lt "$required_storage" ]; then
+        echo -e "${RED}✗${NC}"
+        echo -e "  ${RED}错误：可用存储空间不足 ${required_storage}GB${NC}"
+        echo -e "  ${RED}当前可用: ${available_gb}GB${NC}"
+        has_error=1
+    else
+        echo -e "${GREEN}✓${NC}"
+    fi
+    
+    # 检查可用内存
+    echo -n "  检查可用内存 (最低 ${required_memory}MB)... "
+    local available_memory_kb
+    local available_memory_mb
+    
+    if [ -f /proc/meminfo ]; then
+        available_memory_kb=$(grep -E 'MemAvailable' /proc/meminfo | awk '{print $2}')
+        if [ -z "$available_memory_kb" ]; then
+            # 如果MemAvailable不存在，使用MemFree + Buffers + Cached作为近似值
+            local memfree buffers cached
+            memfree=$(grep 'MemFree' /proc/meminfo | awk '{print $2}')
+            buffers=$(grep 'Buffers' /proc/meminfo | awk '{print $2}')
+            cached=$(grep '^Cached' /proc/meminfo | awk '{print $2}')
+            available_memory_kb=$((memfree + buffers + cached))
+        fi
+        
+        available_memory_mb=$((available_memory_kb / 1024))
+        
+        if [ "$available_memory_mb" -lt "$required_memory" ]; then
+            echo -e "${RED}✗${NC}"
+            echo -e "  ${RED}错误：可用内存不足 ${required_memory}MB${NC}"
+            echo -e "  ${RED}当前可用: ${available_memory_mb}MB${NC}"
+            has_error=1
+        else
+            echo -e "${GREEN}✓${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC}"
+        echo -e "  ${YELLOW}警告：无法检查内存信息${NC}"
+    fi
+    
+    echo ""
+    
+    if [ "$has_error" -eq 1 ]; then
+        echo -e "${RED}===============================================${NC}"
+        echo -e "${RED}              系统资源不足                     ${NC}"
+        echo -e "${RED}===============================================${NC}"
+        echo -e "${RED}请确保系统满足以下最低要求：${NC}"
+        echo -e "${RED}• 可用存储空间: ${required_storage}GB${NC}"
+        echo -e "${RED}• 可用内存: ${required_memory}MB${NC}"
+        echo -e "${RED}安装程序将退出${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}系统资源检查通过 ✓${NC}"
+}
+
+
 # 检查系统架构
 check_architecture() {
     echo -n "检查系统架构... "
     local arch
     arch=$(uname -m)
+    
     case $arch in
         armv7l|armv8l|aarch64|arm64)
             echo -e "${GREEN}✓ ($arch)${NC}"
+            return 0
+            ;;
+        x86_64|i386|i686|amd64)
+            echo -e "${YELLOW}⚠ ($arch)${NC}"
+            print_message "$YELLOW" "警告：检测到x86/x64架构，本脚本主要针对ARM架构优化"
+            print_message "$YELLOW" "在x86系统上运行可能存在兼容性问题或功能限制"
             ;;
         *)
-            echo -e "${RED}✗${NC}"
-            print_message "$RED" "错误：不支持的架构: $arch"
-            print_message "$YELLOW" "本脚本仅支持ARM架构的Armbian系统"
-            exit 1
+            echo -e "${YELLOW}⚠ ($arch)${NC}"
+            print_message "$YELLOW" "警告：检测到非常用架构，可能存在兼容性问题"
             ;;
     esac
+    
+    # 询问用户是否继续
+    echo ""
+    print_message "$YELLOW" "您希望继续安装吗？"
+    echo -e "${YELLOW}1) 继续安装（自行承担兼容性风险）${NC}"
+    echo -e "${YELLOW}2) 退出安装${NC}"
+    
+    while true; do
+        read -p "请选择 [1/2]: " choice
+        case $choice in
+            1)
+                print_message "$YELLOW" "警告：您选择继续安装，请注意兼容性问题"
+                echo -e "${YELLOW}如果遇到问题，请参考相关文档或联系支持${NC}"
+                sleep 2
+                return 1
+                ;;
+            2)
+                print_message "$BLUE" "安装已取消"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}无效选择，请输入1或2${NC}"
+                ;;
+        esac
+    done
 }
 
-# 检查操作系统
-check_os() {
-    echo -n "检查操作系统... "
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        if [[ "$ID" == "debian" && "$VERSION_ID" == "11" ]]; then
-            echo -e "${GREEN}✓ (Debian 11)${NC}"
-        elif [[ "$ID" == "armbian" ]]; then
-            echo -e "${GREEN}✓ (Armbian)${NC}"
-        else
-            echo -e "${YELLOW}⚠ ($PRETTY_NAME)${NC}"
-            print_message "$YELLOW" "本脚本主要针对Debian 11 Armbian系统，继续运行可能遇到兼容性问题。"
-            read -p "是否继续？(y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 0
-            fi
-        fi
-    else
-        echo -e "${RED}✗${NC}"
-        print_message "$RED" "错误：无法检测操作系统信息"
-        exit 1
-    fi
-}
 
 # 检查网络连接
 check_network() {
     echo -n "检查网络连接... "
-    if ping -c 1 -W 2 8.8.8.8 > /dev/null 2>&1; then
+    if ping -c 1 -W 2 baidu.com > /dev/null 2>&1; then
         echo -e "${GREEN}✓${NC}"
     else
         echo -e "${YELLOW}⚠${NC}"
@@ -325,7 +404,7 @@ select_software() {
     print_header "选择安装的软件"
     
     # 询问是否安装1panle
-    read -p "是否安装 1panle？(y/N): " -n 1 -r
+    read -p "是否安装 1panle？-暂时无法使用，请选择不安装(y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         INSTALL_1PANLE=true
@@ -435,15 +514,30 @@ install_1panle() {
         return 1
     }
     
-    update_section_progress "执行安装"
-    echo ""
-    print_message "$YELLOW" "注意：1Panel安装需要较长时间，请耐心等待..."
-    print_message "$YELLOW" "安装过程输出将保存到日志文件"
+    # 使脚本可执行
+    chmod +x /tmp/1panel-install.sh
     
-    if bash /tmp/1panel-install.sh >> "$INSTALL_LOG" 2>&1; then
+    update_section_progress "准备安装"
+    echo ""
+    print_message "$YELLOW" "注意：即将开始安装1Panel，安装过程需要用户交互"
+    print_message "$YELLOW" "请按照提示完成安装配置"
+    echo ""
+    print_message "$CYAN" "按 Enter 键开始安装..."
+    read -r
+    
+    # 保存当前终端设置
+    local old_stty
+    old_stty=$(stty -g)
+    
+    # 执行安装脚本（交互式）
+    if /tmp/1panel-install.sh; then
+        stty "$old_stty"  # 恢复终端设置
+        echo ""
         end_section "success"
         return 0
     else
+        stty "$old_stty"  # 恢复终端设置
+        echo ""
         end_section "error"
         return 1
     fi
@@ -470,18 +564,30 @@ install_mofox() {
     fi
     export PATH="$HOME/.local/bin:$PATH"
     
-    # 步骤4：验证Python版本
-    update_section_progress "验证Python版本"
+       # 第四步：验证依赖版本
+    print_message "$BLUE" "步骤 4: 验证依赖版本"
     local python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
     local python_major=$(echo $python_version | cut -d'.' -f1)
     local python_minor=$(echo $python_version | cut -d'.' -f2)
     
     if [ "$python_major" -eq 3 ] && [ "$python_minor" -ge 11 ]; then
-        echo -e "\r${GREEN}  ✓ Python版本满足要求: $python_version${NC}"
+        print_message "$GREEN" "✓ Python版本满足要求: $python_version"
     else
-        echo -e "\r${RED}  ✗ Python版本不满足要求 (需要 >= 3.11, 当前: $python_version)${NC}"
+        print_message "$RED" "✗ Python版本不满足要求 (需要 >= 3.11, 当前: $python_version)"
         return 1
     fi
+    
+    if ! command -v git &> /dev/null; then
+        print_message "$RED" "✗ Git未正确安装"
+        return 1
+    fi
+    print_message "$GREEN" "✓ Git安装成功"
+    
+    if ! command -v uv &> /dev/null; then
+        print_message "$RED" "✗ UV未正确安装"
+        return 1
+    fi
+    print_message "$GREEN" "✓ UV安装成功"
     
     # 步骤5：创建工作目录
     update_section_progress "创建工作目录"
@@ -489,10 +595,51 @@ install_mofox() {
     mkdir -p MoFox_Bot_Deployment
     cd MoFox_Bot_Deployment || return 1
     
-    # 步骤6：克隆仓库
-    update_section_progress "克隆MoFox-Core仓库"
-    retry_command $MAX_RETRIES $RETRY_DELAY "git clone https://github.com/MoFox-Studio/MoFox-Core.git" "克隆MoFox-Core仓库" || return 1
+     # 第六步：智能克隆MoFox-Core仓库
+    print_message "$BLUE" "步骤 6: 克隆MoFox-Core仓库"
     
+    # GitHub源测速
+    declare -A github_sources=(
+        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
+        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
+    )
+    
+    # 测速函数
+    test_github_speed() {
+        local source_name=$1
+        local test_url=""
+        
+        case $source_name in
+            "direct") test_url="https://github.com" ;;
+            "ghproxy") test_url="https://ghproxy.com" ;;
+        esac
+        
+        local speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
+        local speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
+        echo "${speed_ms:-9999}"
+    }
+    
+    # 测速选择
+    local best_source="direct"
+    local best_speed=9999
+    
+    for source_name in "${!github_sources[@]}"; do
+        local speed=$(test_github_speed "$source_name")
+        if [ "$speed" -lt "$best_speed" ]; then
+            best_speed="$speed"
+            best_source="$source_name"
+        fi
+    done
+    
+    local selected_url="${github_sources[$best_source]}"
+    
+    # 克隆仓库
+    if ! git clone "$selected_url"; then
+        print_message "$RED" "✗ MoFox-Core仓库克隆失败"
+        return 1
+    fi
+    print_message "$GREEN" "✓ MoFox-Core仓库克隆成功"
+  
     # 步骤7：进入项目目录
     update_section_progress "进入项目目录"
     cd MoFox-Core || return 1
