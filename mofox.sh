@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.2.0
+# 版本：2.7.0
 # ============================================
 
 # 脚本功能说明：
@@ -204,16 +204,15 @@ print_mofox_ascii() {
     print_message "$YELLOW" "║          ██║╚██╔╝██║██║   ██║         ║"
     print_message "$YELLOW" "║          ██║ ╚═╝ ██║╚██████╔╝         ║"
     print_message "$RED" "║          ╚═╝     ╚═╝ ╚═════╝          ║"
-    print_message "$RED" "║      ██████╗  ██████╗ ██╗  ██╗         ║"
-    print_message "$MAGENTA" "║      ██╔══██╗██╔═══██╗╚██╗██╔╝         ║"
-    print_message "$MAGENTA" "║      ██████╔╝██║   ██║ ╚███╔╝          ║"
-    print_message "$CYAN" "║      ██╔══██╗██║   ██║ ██╔██╗          ║"
-    print_message "$CYAN" "║      ██║  ██║╚██████╔╝██╔╝ ██╗         ║"
-    print_message "$BLUE" "║      ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝         ║"
+    print_message "$RED" "║          ███████╗ ██████╗ ██╗  ██╗     ║"
+    print_message "$MAGENTA" "║          ██╔════╝██╔═══██╗╚██╗██╔╝     ║"
+    print_message "$MAGENTA" "║          █████╗  ██║   ██║ ╚███╔╝      ║"
+    print_message "$CYAN" "║          ██╔══╝  ██║   ██║ ██╔██╗      ║"
+    print_message "$CYAN" "║          ██║     ╚██████╔╝██╔╝ ██╗     ║"
+    print_message "$BLUE" "║          ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
 }
-
 
 
 # 检查是否以root权限运行
@@ -657,29 +656,43 @@ install_mofox() {
     fi
     
     # 步骤9：在虚拟环境中安装Python依赖（关键修正！）
-    update_section_progress "安装Python依赖"
-    echo -n "  ↳ 在虚拟环境中安装Python依赖... "
-    
-    # 方法1：使用 uv run 在虚拟环境中运行 pip
-    if uv run --virtualenv .venv pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+update_section_progress "安装Python依赖"
+echo -n "  ↳ 在虚拟环境中安装Python依赖... "
+
+# 使用复制模式而不是硬链接
+if UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt; then
+    echo -e "${GREEN}✓${NC}"
+    echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+else
+    echo -e "${RED}✗${NC}"
+
+    # 方法2：先激活虚拟环境再使用uv
+    echo -n "  ↳ 尝试在激活的虚拟环境中使用uv... "
+    if source .venv/bin/activate && uv pip install -r requirements.txt; then
         echo -e "${GREEN}✓${NC}"
-        echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境)${NC}"
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
     else
         echo -e "${RED}✗${NC}"
+
+        # 方法3：直接使用虚拟环境中的pip（最可靠）
+        echo -n "  ↳ 尝试使用虚拟环境中的pip（设置国内源）... "
         
-        # 方法2：使用 uv 直接安装到虚拟环境
-        echo -n "  ↳ 尝试使用 uv 直接安装到虚拟环境... "
-        if uv pip install --python .venv/bin/python -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+        # 设置pip国内源
+        .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+        .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+        
+        # 安装依赖，增加超时和重试
+        if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
             echo -e "${GREEN}✓${NC}"
-            echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用--python参数)${NC}"
+            echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境pip+国内源)${NC}"
         else
             echo -e "${RED}✗${NC}"
             
-            # 方法3：直接使用虚拟环境中的pip
-            echo -n "  ↳ 尝试使用虚拟环境中的pip... "
-            if .venv/bin/pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple >> "$INSTALL_LOG" 2>&1; then
+            # 方法4：分步安装（先装小包，再装大包）
+            echo -n "  ↳ 尝试分步安装依赖... "
+            if install_dependencies_step_by_step; then
                 echo -e "${GREEN}✓${NC}"
-                echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用.venv/bin/pip)${NC}"
+                echo -e "\r${GREEN}  ✓ 依赖安装成功 (分步安装)${NC}"
             else
                 echo -e "${RED}✗${NC}"
                 print_message "$RED" "依赖安装完全失败"
@@ -687,6 +700,7 @@ install_mofox() {
             fi
         fi
     fi
+fi
     
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     update_section_progress "配置环境文件"
@@ -735,22 +749,24 @@ install_mofox() {
         echo -e "\r${YELLOW}  ⚠ QQ号格式错误，跳过配置${NC}"
     fi
     
-    # 步骤15：配置主人QQ
-    update_section_progress "配置主人QQ"
-    echo ""
-    read -p "请输入主人QQ号 (9-11位数字): " master_qq
+    # 步骤15：配置主人QQ（简单修复）
+update_section_progress "配置主人QQ"
+echo ""
+read -p "请输入主人QQ号 (9-11位数字): " master_qq
+
+if [[ "$master_qq" =~ ^[0-9]{9,11}$ ]]; then
+    local config_file="config/bot_config.toml"
     
-    if [[ "$master_qq" =~ ^[0-9]{9,11}$ ]]; then
-        local new_master_config="master_users = [[\"qq\", \"$master_qq\"]]"
-        if grep -q "^\s*\[permission\]" "$config_file"; then
-            sed -i "/^\s*\[permission\]/a $new_master_config" "$config_file" 2>> "$INSTALL_LOG"
-        else
-            echo -e "\n[permission]\n$new_master_config" >> "$config_file"
-        fi
-        echo -e "\r${GREEN}  ✓ 主人QQ号配置成功: $master_qq${NC}"
-    else
-        echo -e "\r${YELLOW}  ⚠ 主人QQ号格式错误，跳过配置${NC}"
-    fi
+    # 直接替换注释掉的示例配置
+    sed -i "s/^master_users = \[\]# \[.*\]/master_users = [[\"qq\", \"$master_qq\"]]/" "$config_file" 2>> "$INSTALL_LOG"
+    
+    # 如果上面的替换没匹配到（可能是空数组）
+    sed -i "s/^master_users = \[\]/master_users = [[\"qq\", \"$master_qq\"]]/" "$config_file" 2>> "$INSTALL_LOG"
+    
+    echo -e "\r${GREEN}  ✓ 主人QQ号配置成功: $master_qq${NC}"
+else
+    echo -e "\r${YELLOW}  ⚠ 主人QQ号格式错误，跳过配置${NC}"
+fi
     
     # 步骤16：配置模型文件
     update_section_progress "配置模型文件"
