@@ -690,7 +690,7 @@ install_mofox() {
         print_message "$YELLOW" "未找到模型配置模板"
     fi
     
-     # 步骤17：配置API密钥
+    # 步骤17：配置API密钥
     echo ""
     read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
     
@@ -872,3 +872,205 @@ install_mofox() {
         echo -e "${RED}✗${NC}"
         echo -e "${YELLOW}虚拟环境测试失败${NC}"
     fi
+    
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    print_message "$GREEN" "✓ MoFox-Core安装完成"
+    
+    # 显示完成信息
+    echo ""
+    print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+    print_message "$CYAN" "║                    MoFox-Core 安装完成                   ║"
+    print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
+    print_message "$GREEN" "║  总用时: ${duration}秒                                 ║"
+    print_message "$GREEN" "║  项目目录: $(pwd)                                     ║"
+    print_message "$GREEN" "║  虚拟环境: .venv/                                      ║"
+    print_message "$CYAN" "║                                                          ║"
+    print_message "$YELLOW" "║  重要: 所有依赖已安装在虚拟环境中                    ║"
+    print_message "$YELLOW" "║                                                          ║"
+    print_message "$YELLOW" "║  启动方式:                                            ║"
+    print_message "$YELLOW" "║  1. 手动激活虚拟环境: source .venv/bin/activate        ║"
+    print_message "$YELLOW" "║  2. 然后运行: python bot.py                            ║"
+    print_message "$YELLOW" "║                                                          ║"
+    print_message "$YELLOW" "║  或使用完整路径直接运行:                              ║"
+    print_message "$YELLOW" "║  .venv/bin/python bot.py                               ║"
+    print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    return 0
+}
+
+# ============================================
+# 主脚本开始
+# ============================================
+
+# 创建日志文件
+mkdir -p "$(dirname "$INSTALL_LOG")"
+touch "$INSTALL_LOG"
+
+# 记录开始时间
+START_TIME=$(date +%s)
+log_message "脚本开始执行"
+
+# 显示欢迎信息
+clear
+print_mofox_ascii
+print_header "$SCRIPT_NAME v$SCRIPT_VERSION"
+
+# 显示优化说明
+echo ""
+print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+print_message "$CYAN" "║                     优化功能说明                         ║"
+print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
+print_message "$GREEN" "║  ✓ 自动重试机制 (最大重试: $MAX_RETRIES 次)              ║"
+print_message "$GREEN" "║  ✓ 详细日志记录: $INSTALL_LOG                     ║"
+print_message "$GREEN" "║  ✓ 虚拟环境支持 (自动创建和配置)                         ║"
+print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
+echo ""
+
+# 等待用户确认
+read -p "是否开始安装？(Y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z "$REPLY" ]]; then
+    print_message "$YELLOW" "安装已取消。"
+    exit 0
+fi
+
+# ============================================
+# 系统检查和准备
+# ============================================
+print_header "系统检查"
+
+print_message "$BLUE" "正在进行系统检查..."
+check_root
+check_architecture
+check_network
+
+# 选择安装软件
+select_software
+
+# ============================================
+# 系统更新
+# ============================================
+if ! update_system; then
+    print_message "$RED" "系统更新失败，安装终止"
+    exit 1
+fi
+
+# ============================================
+# 安装依赖
+# ============================================
+if ! install_dependencies; then
+    print_message "$RED" "依赖安装失败，安装终止"
+    exit 1
+fi
+
+# ============================================
+# 软件安装
+# ============================================
+print_header "软件安装"
+
+# 安装NapcatQQ
+if [ "$INSTALL_NAPCATQQ" = true ]; then
+    if ! install_napcatqq; then
+        print_message "$RED" "✗ NapcatQQ安装失败"
+        log_message "NapcatQQ安装失败"
+        # 询问是否继续
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
+
+# 安装coplar
+if [ "$INSTALL_COPLAR" = true ]; then
+    if ! install_coplar; then
+        print_message "$RED" "✗ coplar安装失败"
+        log_message "coplar安装失败"
+        # 询问是否继续
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
+
+# 安装1panle
+if [ "$INSTALL_1PANLE" = true ]; then
+    if ! install_1panle; then
+        print_message "$RED" "✗ 1panle安装失败"
+        log_message "1panle安装失败"
+        # 询问是否继续
+        read -p "是否继续安装其他软件？(Y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
+
+# 安装MoFox-Core
+if [ "$INSTALL_MOFOX" = true ]; then
+    if ! install_mofox; then
+        print_message "$RED" "✗ MoFox-Core安装失败"
+        log_message "MoFox-Core安装失败"
+        exit 1
+    fi
+fi
+
+# ============================================
+# 安装完成
+# ============================================
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+print_header "安装完成"
+
+echo ""
+print_message "$GREEN" "╔══════════════════════════════════════════════════════════╗"
+print_message "$GREEN" "║                     安装完成总结                         ║"
+print_message "$GREEN" "╠══════════════════════════════════════════════════════════╣"
+print_message "$CYAN" "║  总用时: $DURATION 秒                                    ║"
+print_message "$CYAN" "║  日志文件: $INSTALL_LOG                           ║"
+print_message "$CYAN" "║                                                          ║"
+print_message "$YELLOW" "║  安装的软件:                                          ║"
+[ "$INSTALL_MOFOX" = true ] && print_message "$YELLOW" "║    • MoFox-Core                                      ║"
+[ "$INSTALL_NAPCATQQ" = true ] && print_message "$YELLOW" "║    • NapcatQQ                                       ║"
+[ "$INSTALL_1PANLE" = true ] && print_message "$YELLOW" "║    • 1Panel                                         ║"
+[ "$INSTALL_COPLAR" = true ] && print_message "$YELLOW" "║    • Cpolar                                         ║"
+print_message "$GREEN" "╚══════════════════════════════════════════════════════════╝"
+echo ""
+echo "安装完成！请按照以下步骤操作："
+echo ""
+[ "$INSTALL_MOFOX" = true ] && echo "1. MoFox-Core: 进入 ~/MoFox_Bot_Deployment/MoFox-Core 目录"
+[ "$INSTALL_MOFOX" = true ] && echo "   激活虚拟环境: source .venv/bin/activate"
+[ "$INSTALL_MOFOX" = true ] && echo "   启动机器人: python bot.py"
+echo ""
+[ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 编辑 /opt/NapCatQQ/config/config.yaml 配置文件"
+[ "$INSTALL_NAPCATQQ" = true ] && echo "   启动服务: systemctl start napcatqq"
+echo ""
+[ "$INSTALL_1PANLE" = true ] && echo "3. 1Panel: 访问 http://<服务器IP>:目标端口"
+[ "$INSTALL_1PANLE" = true ] && echo "   使用安装时设置的用户名和密码登录"
+echo ""
+[ "$INSTALL_COPLAR" = true ] && echo "4. Cpolar: 配置认证令牌: cpolar authtoken <您的token>"
+[ "$INSTALL_COPLAR" = true ] && echo "   启动服务: systemctl start cpolar"
+echo ""
+print_message "$YELLOW" "建议重启系统以确保所有服务正常运行。"
+echo ""
+
+log_message "脚本执行完成，总用时: $DURATION 秒"
+
+# 询问是否重启
+read -p "是否现在重启系统？(y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    print_message "$YELLOW" "系统将在5秒后重启..."
+    sleep 5
+    reboot
+fi
+
+exit 0
