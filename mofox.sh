@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.7.3bate
+# 版本：2.7.4
 # ============================================
 
 # 脚本功能说明：
@@ -42,7 +42,7 @@ NC='\033[0m' # No Color
 # 变量定义
 # ============================================
 SCRIPT_NAME="Armbian软件安装脚本"
-SCRIPT_VERSION="2.7.1bate"
+SCRIPT_VERSION="2.7.4"
 INSTALL_LOG="/var/log/armbian_install_$(date +%Y%m%d_%H%M%S).log"
 TEMP_DIR="/tmp/armbian_install"
 
@@ -51,6 +51,148 @@ INSTALL_MOFOX=true
 INSTALL_NAPCATQQ=true
 INSTALL_1PANLE=false
 INSTALL_COPLAR=false
+
+# ============================================
+# 增强版网络测速功能
+# ============================================
+
+# 代理服务器列表
+declare -a GITHUB_PROXY_SERVERS=(
+    "https://ghfast.top"
+    "https://git.yylx.win/"
+    "https://gh-proxy.com"
+    "https://ghfile.geekertao.top"
+    "https://gh-proxy.net"
+    "https://j.1win.ggff.net"
+    "https://ghm.078465.xyz"
+    "https://gitproxy.127731.xyz"
+    "https://jiashu.1win.eu.org"
+    "https://github.tbedu.top"
+)
+
+# 速度格式转换函数
+format_speed() {
+    local speed_bps=$1
+    if (( speed_bps >= 1048576 )); then
+        # MB/s
+        local speed_mbs=$((speed_bps / 1048576))
+        echo "${speed_mbs} MB/s"
+    elif (( speed_bps >= 1024 )); then
+        # KB/s
+        local speed_kbs=$((speed_bps / 1024))
+        echo "${speed_kbs} KB/s"
+    else
+        # B/s
+        echo "${speed_bps} B/s"
+    fi
+}
+
+# 网络测速函数（增强版）
+test_github_speed_enhanced() {
+    local source_name=$1
+    local test_url=""
+    local timeout=5
+    local check_url="https://raw.githubusercontent.com/MoFox-Studio/MoFox-Core/main/README.md"
+    
+    case $source_name in
+        "direct") test_url="https://github.com" ;;
+        "ghproxy") test_url="https://ghproxy.com" ;;
+        "ghfast") test_url="https://ghfast.top" ;;
+        "git.yylx") test_url="https://git.yylx.win" ;;
+        "gh-proxy") test_url="https://gh-proxy.com" ;;
+        "ghfile") test_url="https://ghfile.geekertao.top" ;;
+        "j.1win") test_url="https://j.1win.ggff.net" ;;
+        "ghm") test_url="https://ghm.078465.xyz" ;;
+        "gitproxy") test_url="https://gitproxy.127731.xyz" ;;
+        "jiashu") test_url="https://jiashu.1win.eu.org" ;;
+        "github.tbedu") test_url="https://github.tbedu.top" ;;
+    esac
+    
+    # 构建测试URL
+    local test_target="${test_url}/${check_url}"
+    
+    # 使用curl测试速度
+    local curl_output
+    curl_output=$(curl -k -L --connect-timeout ${timeout} --max-time $((timeout * 3)) \
+        -o /dev/null -s -w "%{http_code}:%{exitcode}:%{speed_download}" \
+        "${test_target}" 2>/dev/null || echo "9999:9999:0")
+    
+    local status=$(echo "${curl_output}" | cut -d: -f1)
+    local curl_exit_code=$(echo "${curl_output}" | cut -d: -f2)
+    local download_speed=$(echo "${curl_output}" | cut -d: -f3 | cut -d. -f1)
+    
+    # 如果HTTP状态码不是200或curl退出码非0，视为失败
+    if [ "${curl_exit_code}" -ne 0 ] || [ "${status}" -ne 200 ]; then
+        echo "9999"
+    else
+        echo "${download_speed:-0}"
+    fi
+}
+
+# 智能选择GitHub源
+select_fastest_github_source() {
+    echo -n "正在测试GitHub代理速度..."
+    
+    # 测试所有代理源
+    declare -A github_sources
+    local best_source="direct"
+    local best_speed=0
+    local direct_url="https://github.com/MoFox-Studio/MoFox-Core.git"
+    
+    # 测试直接连接
+    local direct_speed
+    direct_speed=$(test_github_speed_enhanced "direct")
+    github_sources["direct"]="${direct_url}"
+    
+    echo -e "\n  ↳ 直连速度: $(format_speed ${direct_speed})"
+    
+    if [ "${direct_speed}" -gt 0 ] && [ "${direct_speed}" -lt 9999 ]; then
+        best_speed=${direct_speed}
+    fi
+    
+    # 测试所有代理
+    local proxy_index=1
+    for proxy in "${GITHUB_PROXY_SERVERS[@]}"; do
+        local proxy_name
+        case $proxy in
+            "https://ghfast.top") proxy_name="ghfast" ;;
+            "https://git.yylx.win/") proxy_name="git.yylx" ;;
+            "https://gh-proxy.com") proxy_name="gh-proxy" ;;
+            "https://ghfile.geekertao.top") proxy_name="ghfile" ;;
+            "https://j.1win.ggff.net") proxy_name="j.1win" ;;
+            "https://ghm.078465.xyz") proxy_name="ghm" ;;
+            "https://gitproxy.127731.xyz") proxy_name="gitproxy" ;;
+            "https://jiashu.1win.eu.org") proxy_name="jiashu" ;;
+            "https://github.tbedu.top") proxy_name="github.tbedu" ;;
+            *) proxy_name="proxy_${proxy_index}" ;;
+        esac
+        
+        local speed
+        speed=$(test_github_speed_enhanced "${proxy_name}")
+        
+        if [ "${speed}" -lt 9999 ] && [ "${speed}" -gt 0 ]; then
+            local proxy_url="${proxy}/https://github.com/MoFox-Studio/MoFox-Core.git"
+            github_sources["${proxy_name}"]="${proxy_url}"
+            
+            echo -e "  ↳ 代理${proxy_index} (${proxy_name}): $(format_speed ${speed})"
+            
+            if [ "${speed}" -gt "${best_speed}" ]; then
+                best_speed=${speed}
+                best_source="${proxy_name}"
+            fi
+        else
+            echo -e "  ↳ 代理${proxy_index} (${proxy_name}): ${RED}失败${NC}"
+        fi
+        
+        ((proxy_index++))
+    done
+    
+    local selected_url="${github_sources[$best_source]}"
+    
+    echo -e "\n${GREEN}✓ 选择最快源: ${best_source} ($(format_speed ${best_speed}))${NC}"
+    
+    echo "${selected_url}"
+}
 
 # ============================================
 # 函数定义
@@ -123,18 +265,18 @@ print_mofox_ascii() {
     echo ""
     print_message "$BLUE" "╔═══════════════════════════════════════╗"
     print_message "$BLUE" "║                                       ║"
-    print_message "$BLUE" "║          ███╗   ███╗ ██████╗          ║"
-    print_message "$GREEN" "║          ████╗ ████║██╔═══██╗         ║"
-    print_message "$GREEN" "║          ██╔████╔██║██║   ██║         ║"
-    print_message "$YELLOW" "║          ██║╚██╔╝██║██║   ██║         ║"
-    print_message "$YELLOW" "║          ██║ ╚═╝ ██║╚██████╔╝         ║"
-    print_message "$RED" "║          ╚═╝     ╚═╝ ╚═════╝          ║"
-    print_message "$RED" "║          ███████╗ ██████╗ ██╗  ██╗     ║"
-    print_message "$MAGENTA" "║          ██╔════╝██╔═══██╗╚██╗██╔╝     ║"
-    print_message "$MAGENTA" "║          █████╗  ██║   ██║ ╚███╔╝      ║"
-    print_message "$CYAN" "║          ██╔══╝  ██║   ██║ ██╔██╗      ║"
-    print_message "$CYAN" "║          ██║     ╚██████╔╝██╔╝ ██╗     ║"
-    print_message "$BLUE" "║          ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
+    print_message "$BLUE" "║         ███╗   ███╗ ██████╗          ║"
+    print_message "$GREEN" "║         ████╗ ████║██╔═══██╗         ║"
+    print_message "$GREEN" "║         ██╔████╔██║██║   ██║         ║"
+    print_message "$YELLOW" "║         ██║╚██╔╝██║██║   ██║         ║"
+    print_message "$YELLOW" "║         ██║ ╚═╝ ██║╚██████╔╝         ║"
+    print_message "$RED" "║         ╚═╝     ╚═╝ ╚═════╝          ║"
+    print_message "$RED" "║         ███████╗ ██████╗ ██╗  ██╗     ║"
+    print_message "$MAGENTA" "║         ██╔════╝██╔═══██╗╚██╗██╔╝     ║"
+    print_message "$MAGENTA" "║         █████╗  ██║   ██║ ╚███╔╝      ║"
+    print_message "$CYAN" "║         ██╔══╝  ██║   ██║ ██╔██╗      ║"
+    print_message "$CYAN" "║         ██║     ╚██████╔╝██╔╝ ██╗     ║"
+    print_message "$BLUE" "║         ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
 }
@@ -511,46 +653,12 @@ install_mofox() {
     cd MoFox_Bot_Deployment || return 1
     echo -e "${GREEN}✓${NC}"
     
-    # 步骤6：智能克隆MoFox-Core仓库
+    # 步骤6：智能克隆MoFox-Core仓库（使用增强版测速）
     echo -n "克隆MoFox-Core仓库... "
     
-    # GitHub源测速
-    declare -A github_sources=(
-        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
-        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
-    )
-    
-    # 测速函数
-    test_github_speed() {
-        local source_name=$1
-        local test_url=""
-        
-        case $source_name in
-            "direct") test_url="https://github.com" ;;
-            "ghproxy") test_url="https://ghproxy.com" ;;
-        esac
-        
-        local speed
-        speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
-        local speed_ms
-        speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
-        echo "${speed_ms:-9999}"
-    }
-    
-    # 测速选择
-    local best_source="direct"
-    local best_speed=9999
-    
-    for source_name in "${!github_sources[@]}"; do
-        local speed
-        speed=$(test_github_speed "$source_name")
-        if [ "$speed" -lt "$best_speed" ]; then
-            best_speed="$speed"
-            best_source="$source_name"
-        fi
-    done
-    
-    local selected_url="${github_sources[$best_source]}"
+    # 使用增强版测速选择最快源
+    local selected_url
+    selected_url=$(select_fastest_github_source)
     
     # 克隆仓库
     if ! git clone "$selected_url"; then
@@ -574,43 +682,50 @@ install_mofox() {
         return 1
     fi
     
-  # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
-update_section_progress "安装Python依赖"
-
-# 方法1：使用uv指定Python路径（重试3次）
-echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
-if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
-    echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
-else
-    echo -e "\r${RED}  ✗ 方法1失败${NC}"
+    # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
+    echo "安装Python依赖..."
     
-    # 方法2：先激活虚拟环境再使用uv（重试3次）
-    echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
-    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
-        echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
+    # 方法1：使用uv指定Python路径（重试3次）
+    echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
+    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
     else
-        echo -e "\r${RED}  ✗ 方法2失败${NC}"
+        echo -e "\r${RED}  ✗ 方法1失败${NC}"
         
-       # 使用复制模式而不是硬链接
-echo -n "  ↳ 尝试方法3 (使用复制模式)... "
-    if retry_command UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt; then
-        echo -e "${GREEN}✓${NC}"
-    else
-        echo -e "${RED}✗${NC}"
+        # 方法2：先激活虚拟环境再使用uv（重试3次）
+        echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
+        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+            echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
+        else
+            echo -e "\r${RED}  ✗ 方法2失败${NC}"
             
-            # 方法4：分步安装（先装小包，再装大包）
-            echo -n "  ↳ 尝试方法4 (分步安装)... "
-            if install_dependencies_step_by_step; then
+            # 方法3：直接使用虚拟环境中的pip（最可靠）
+            echo -n "  ↳ 尝试方法3 (使用虚拟环境pip+国内源)... "
+            
+            # 设置pip国内源
+            .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+            .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+            
+            # 安装依赖，增加超时和重试
+            if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
                 echo -e "${GREEN}✓${NC}"
-                echo -e "\r${GREEN}  ✓ 依赖安装成功 (分步安装)${NC}"
+                echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境pip+国内源)${NC}"
             else
                 echo -e "${RED}✗${NC}"
-                print_message "$RED" "依赖安装完全失败"
-                return 1
+                
+                # 方法4：分步安装（先装小包，再装大包）
+                echo -n "  ↳ 尝试方法4 (分步安装)... "
+                if install_dependencies_step_by_step; then
+                    echo -e "${GREEN}✓${NC}"
+                    echo -e "\r${GREEN}  ✓ 依赖安装成功 (分步安装)${NC}"
+                else
+                    echo -e "${RED}✗${NC}"
+                    print_message "$RED" "依赖安装完全失败"
+                    return 1
+                fi
             fi
         fi
     fi
-fi
     
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
@@ -776,7 +891,7 @@ fi
         
         # 显示等待进度
         local progress=$((elapsed_time * 100 / timeout))
-        printf "\r${BLUE}等待配置文件生成... %d%%${NC}" $progress
+        printf "\r${BLUE}等待配置文件生成... %d%%${NC}" "$progress"
         
         sleep 2
     done
@@ -923,6 +1038,7 @@ print_message "$CYAN" "╠══════════════════
 print_message "$GREEN" "║  ✓ 自动重试机制 (最大重试: $MAX_RETRIES 次)              ║"
 print_message "$GREEN" "║  ✓ 详细日志记录: $INSTALL_LOG                     ║"
 print_message "$GREEN" "║  ✓ 虚拟环境支持 (自动创建和配置)                         ║"
+print_message "$GREEN" "║  ✓ 增强网络测速 (智能选择最快GitHub源)                   ║"
 print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -1033,6 +1149,7 @@ print_message "$GREEN" "║                     安装完成总结              
 print_message "$GREEN" "╠══════════════════════════════════════════════════════════╣"
 print_message "$CYAN" "║  总用时: $DURATION 秒                                    ║"
 print_message "$CYAN" "║  日志文件: $INSTALL_LOG                           ║"
+print_message "$CYAN" "║  脚本版本: $SCRIPT_VERSION                               ║"
 print_message "$CYAN" "║                                                          ║"
 print_message "$YELLOW" "║  安装的软件:                                          ║"
 [ "$INSTALL_MOFOX" = true ] && print_message "$YELLOW" "║    • MoFox-Core                                      ║"
