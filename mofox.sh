@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.7.4
+# 版本：2.7.5
 # ============================================
 
 # 脚本功能说明：
@@ -41,8 +41,8 @@ NC='\033[0m' # No Color
 # ============================================
 # 变量定义
 # ============================================
-SCRIPT_NAME="Armbian软件安装脚本"
-SCRIPT_VERSION="2.7.4"
+SCRIPT_NAME="Armbian软件自动安装脚本"
+SCRIPT_VERSION="2.7.5"
 INSTALL_LOG="/var/log/armbian_install_$(date +%Y%m%d_%H%M%S).log"
 TEMP_DIR="/tmp/armbian_install"
 
@@ -52,7 +52,10 @@ INSTALL_NAPCATQQ=true
 INSTALL_1PANLE=false
 INSTALL_COPLAR=false
 
-
+# 新增标志变量
+MOFOX_EXISTS=false
+NAPCAT_EXISTS=false
+SKIP_SYSTEM_CHECK=false
 # ============================================
 # 函数定义
 # ============================================
@@ -139,6 +142,459 @@ print_mofox_ascii() {
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
 
+}
+# ============================================
+# 新增：检查MoFox目录函数
+# ============================================
+
+# 检查MoFox_Bot_Deployment文件夹是否存在
+check_mofox_directory() {
+    print_message "$CYAN" "检查MoFox安装状态..."
+    
+    local mofox_dir="$HOME/MoFox_Bot_Deployment"
+    local mofox_core_dir="$mofox_dir/MoFox-Core"
+    
+    if [ -d "$mofox_dir" ]; then
+        MOFOX_EXISTS=true
+        
+        echo ""
+        print_message "$YELLOW" "╔══════════════════════════════════════════════════════════╗"
+        print_message "$YELLOW" "║                检测到现有MoFox安装                      ║"
+        print_message "$YELLOW" "╠══════════════════════════════════════════════════════════╣"
+        print_message "$GREEN" "║  目录: $mofox_dir                          ║"
+        
+        if [ -d "$mofox_core_dir" ]; then
+            print_message "$GREEN" "║  MoFox-Core: 已存在                                     ║"
+            
+            # 检查虚拟环境
+            if [ -d "$mofox_core_dir/.venv" ]; then
+                print_message "$GREEN" "║  虚拟环境: 已创建                                     ║"
+                # 检查Python版本
+                if [ -f "$mofox_core_dir/.venv/bin/python" ]; then
+                    local python_version
+                    python_version=$("$mofox_core_dir/.venv/bin/python" --version 2>&1 || echo "未知")
+                    print_message "$GREEN" "║  Python版本: $python_version                    ║"
+                fi
+            else
+                print_message "$YELLOW" "║  虚拟环境: 未找到                                     ║"
+            fi
+            
+            # 检查配置文件
+            if [ -f "$mofox_core_dir/.env" ]; then
+                print_message "$GREEN" "║  环境配置: 已创建                                     ║"
+            fi
+        else
+            print_message "$YELLOW" "║  MoFox-Core: 不存在                                     ║"
+        fi
+        
+        print_message "$YELLOW" "╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        
+        # 询问用户操作选项
+        print_message "$CYAN" "请选择操作："
+        echo -e "${CYAN}1) 重新安装MoFox-Core (删除现有目录并重新安装)"
+        echo -e "${CYAN}2) 继续使用现有目录安装 (仅更新/修复)"
+        echo -e "${CYAN}3) 跳过系统检查，直接从软件选择开始"
+        echo -e "${CYAN}4) 正常完整安装 (忽略现有目录)"
+        
+        while true; do
+            read -p "请选择 [1/2/3/4]: " choice
+            case $choice in
+                1)
+                    print_message "$YELLOW" "您选择了重新安装MoFox-Core"
+                    print_message "$RED" "警告：这将删除现有MoFox目录并重新安装！"
+                    read -p "确认删除 $mofox_dir ？(y/N): " -n 1 -r
+                    echo
+                    if [[ $REPLY =~ ^[Yy]$ ]]; then
+                        echo -n "删除现有目录... "
+                        rm -rf "$mofox_dir" 2>/dev/null
+                        MOFOX_EXISTS=false
+                        echo -e "${GREEN}✓${NC}"
+                        print_message "$GREEN" "已删除现有目录，将继续正常安装流程"
+                        sleep 2
+                    else
+                        print_message "$YELLOW" "取消删除，继续使用现有目录"
+                        return 1
+                    fi
+                    ;;
+                2)
+                    print_message "$GREEN" "您选择了继续使用现有目录安装"
+                    print_message "$YELLOW" "注意：如果安装失败，可能需要清理现有目录"
+                    SKIP_SYSTEM_CHECK=true
+                    return 2
+                    ;;
+                3)
+                    print_message "$GREEN" "您选择了跳过系统检查"
+                    SKIP_SYSTEM_CHECK=true
+                    return 3
+                    ;;
+                4)
+                    print_message "$GREEN" "您选择了正常完整安装"
+                    return 0
+                    ;;
+                *)
+                    echo -e "${RED}无效选择，请输入1-4${NC}"
+                    ;;
+            esac
+        done
+    else
+        print_message "$GREEN" "未检测到现有MoFox安装，将进行全新安装"
+        MOFOX_EXISTS=false
+        return 0
+    fi
+}
+
+# ============================================
+# 新增：检查Napcat目录函数
+# ============================================
+
+# 检查NapcatQQ文件夹是否存在
+# ============================================
+# 修正：检查NapcatQQ目录函数（更全面的检测）
+# ============================================
+
+# 检查NapcatQQ文件夹是否存在
+check_napcat_directory() {
+    print_message "$CYAN" "检查NapcatQQ安装状态..."
+    
+    local found_dirs=()
+    local napcat_dir=""
+    
+    # 扩展搜索路径，包含更多可能的目录
+    local search_paths=(
+        "/opt/NapCatQQ"
+        "/opt/napcatqq"
+        "/opt/Napcat"
+        "/usr/local/NapCatQQ"
+        "/usr/local/napcatqq"
+        "/usr/local/Napcat"
+        "$HOME/NapCatQQ"
+        "$HOME/napcatqq"
+        "$HOME/Napcat"
+        "/root/NapCatQQ"
+        "/root/napcatqq"
+        "/root/Napcat"
+        "/home/$USER/NapCatQQ"
+        "/home/$USER/napcatqq"
+        "/home/$USER/Napcat"
+        "/var/lib/NapCatQQ"
+        "/srv/NapCatQQ"
+        "/data/NapCatQQ"
+    )
+    
+    # 使用find命令进行更广泛的搜索
+    echo -n "搜索NapcatQQ目录... "
+    for path in "${search_paths[@]}"; do
+        if [ -d "$path" ]; then
+            found_dirs+=("$path")
+        fi
+    done
+    
+    # 使用find命令搜索包含"napcat"或"NapCat"的目录
+    if [ ${#found_dirs[@]} -eq 0 ]; then
+        echo -n "(使用find搜索)... "
+        # 搜索根目录下包含napcat的目录
+        local found_by_find
+        found_by_find=$(find / -type d -name "*napcat*" -o -name "*NapCat*" 2>/dev/null | head -5)
+        
+        if [ -n "$found_by_find" ]; then
+            while IFS= read -r dir; do
+                if [ -d "$dir" ]; then
+                    found_dirs+=("$dir")
+                fi
+            done <<< "$found_by_find"
+        fi
+    fi
+    
+    # 检查进程
+    if pgrep -f "napcat\|NapCat" > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ (检测到运行中的进程)${NC}"
+        NAPCAT_EXISTS=true
+    elif [ ${#found_dirs[@]} -gt 0 ]; then
+        echo -e "${GREEN}✓ (找到 ${#found_dirs[@]} 个目录)${NC}"
+        NAPCAT_EXISTS=true
+    else
+        echo -e "${YELLOW}✗${NC}"
+        print_message "$GREEN" "未检测到现有NapcatQQ安装，将进行全新安装"
+        NAPCAT_EXISTS=false
+        return 0
+    fi
+    
+    if [ "$NAPCAT_EXISTS" = true ]; then
+        echo ""
+        print_message "$YELLOW" "╔══════════════════════════════════════════════════════════╗"
+        print_message "$YELLOW" "║                检测到现有NapcatQQ安装                   ║"
+        print_message "$YELLOW" "╠══════════════════════════════════════════════════════════╣"
+        
+        # 显示找到的目录
+        for dir in "${found_dirs[@]}"; do
+            print_message "$GREEN" "║  目录: $dir"
+        done
+        
+        # 检查服务状态
+        if systemctl is-active --quiet napcatqq 2>/dev/null; then
+            print_message "$GREEN" "║  服务状态: 运行中                                    ║"
+        elif systemctl is-enabled --quiet napcatqq 2>/dev/null 2>/dev/null; then
+            print_message "$YELLOW" "║  服务状态: 已启用但未运行                           ║"
+        fi
+        
+        # 检查配置文件
+        for dir in "${found_dirs[@]}"; do
+            if [ -f "$dir/config/config.yaml" ] || [ -f "$dir/config.yaml" ]; then
+                print_message "$GREEN" "║  配置文件: 存在                                    ║"
+                break
+            fi
+        done
+        
+        print_message "$YELLOW" "╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        
+        # 询问用户操作选项
+        print_message "$CYAN" "请选择NapcatQQ安装操作："
+        echo -e "${CYAN}1) 重新安装NapcatQQ (删除现有目录并重新安装)"
+        echo -e "${CYAN}2) 升级/修复安装 (保留配置文件)"
+        echo -e "${CYAN}3) 跳过安装NapcatQQ"
+        echo -e "${CYAN}4) 正常安装 (忽略现有目录，可能覆盖)"
+        
+        while true; do
+            read -p "请选择 [1/2/3/4]: " choice
+            case $choice in
+                1)
+                    print_message "$YELLOW" "您选择了重新安装NapcatQQ"
+                    print_message "$RED" "警告：这将删除现有NapcatQQ目录并重新安装！"
+                    
+                    # 停止服务
+                    echo -n "停止NapcatQQ服务... "
+                    systemctl stop napcatqq 2>/dev/null
+                    systemctl disable napcatqq 2>/dev/null
+                    echo -e "${GREEN}✓${NC}"
+                    
+                    # 删除找到的所有目录
+                    echo -n "删除NapcatQQ目录... "
+                    for dir in "${found_dirs[@]}"; do
+                        if [ -d "$dir" ]; then
+                            rm -rf "$dir" 2>/dev/null
+                            echo -e "\n  删除: $dir"
+                        fi
+                    done
+                    
+                    # 清理服务文件
+                    echo -n "清理服务文件... "
+                    rm -f /etc/systemd/system/napcatqq.service 2>/dev/null
+                    rm -f /lib/systemd/system/napcatqq.service 2>/dev/null
+                    systemctl daemon-reload 2>/dev/null
+                    echo -e "${GREEN}✓${NC}"
+                    
+                    print_message "$GREEN" "已清理现有安装，将重新安装NapcatQQ"
+                    NAPCAT_EXISTS=false
+                    sleep 2
+                    return 1
+                    ;;
+                2)
+                    print_message "$GREEN" "您选择了升级/修复安装"
+                    print_message "$YELLOW" "将尝试升级现有NapcatQQ安装"
+                    NAPCAT_EXISTS=true  # 标记为存在，后续会尝试升级
+                    
+                    # 设置主目录
+                    if [ ${#found_dirs[@]} -gt 0 ]; then
+                        NAPCAT_DIR="${found_dirs[0]}"
+                        export NAPCAT_DIR
+                        print_message "$GREEN" "将使用目录: $NAPCAT_DIR"
+                    fi
+                    
+                    return 2
+                    ;;
+                3)
+                    print_message "$YELLOW" "您选择了跳过安装NapcatQQ"
+                    INSTALL_NAPCATQQ=false
+                    return 3
+                    ;;
+                4)
+                    print_message "$GREEN" "您选择了正常安装"
+                    print_message "$YELLOW" "注意：如果安装失败，可能需要清理现有目录"
+                    return 4
+                    ;;
+                *)
+                    echo -e "${RED}无效选择，请输入1-4${NC}"
+                    ;;
+            esac
+        done
+    fi
+}
+
+# ============================================
+# 新增：快速安装模式
+# ============================================
+
+quick_install_mode() {
+    print_header "快速安装模式"
+    
+    print_message "$GREEN" "检测到现有目录，启用快速安装模式"
+    print_message "$YELLOW" "将跳过系统检查、更新和依赖安装"
+    
+    # 如果用户之前跳过了Napcat安装，重新询问
+    if [ "$INSTALL_NAPCATQQ" = false ]; then
+        read -p "是否安装NapcatQQ？(y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            INSTALL_NAPCATQQ=true
+            # 在快速模式下也检查Napcat目录
+            check_napcat_directory
+        fi
+    fi
+    
+    # 直接进入软件选择
+    select_software
+    
+    # 直接安装软件
+    print_header "软件安装"
+    
+    # 先安装其他软件
+    [ "$INSTALL_COPLAR" = true ] && install_coplar
+    [ "$INSTALL_1PANLE" = true ] && install_1panle
+    
+    # 安装NapcatQQ（如果选择了）
+    if [ "$INSTALL_NAPCATQQ" = true ]; then
+        if ! install_napcatqq; then
+            print_message "$RED" "✗ NapcatQQ安装失败"
+            log_message "NapcatQQ安装失败"
+        fi
+    fi
+    
+    # 最后安装MoFox（如果选择了）
+    if [ "$INSTALL_MOFOX" = true ]; then
+        if ! install_mofox; then
+            print_message "$RED" "✗ MoFox-Core安装失败"
+            log_message "MoFox-Core安装失败"
+            exit 1
+        fi
+    fi
+    
+    return 0
+}
+# ============================================
+# 新增：配置现有MoFox的函数
+# ============================================
+
+configure_existing_mofox() {
+    print_message "$GREEN" "配置现有MoFox-Core安装..."
+    
+    cd ~/MoFox_Bot_Deployment/MoFox-Core || return 1
+    
+    # 检查虚拟环境
+    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+        print_message "$RED" "虚拟环境不存在或损坏，需要重新安装"
+        return 1
+    fi
+    
+    # 验证虚拟环境
+    echo -n "验证虚拟环境... "
+    if .venv/bin/python -c "import sys; print('Python', sys.version)" >> "$INSTALL_LOG" 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+        print_message "$RED" "虚拟环境验证失败"
+        return 1
+    fi
+    
+    # 检查配置文件
+    if [ ! -f ".env" ]; then
+        print_message "$YELLOW" "环境文件不存在，创建默认配置"
+        cp template/template.env .env 2>> "$INSTALL_LOG" || echo -e "${YELLOW}⚠ 环境文件创建失败${NC}"
+        sed -i 's/^EULA_CONFIRMED=.*/EULA_CONFIRMED=true/' .env
+    fi
+    
+    # 检查插件配置
+    if [ ! -d "config/plugins/napcat_adapter" ]; then
+        echo -n "配置Napcat插件... "
+        mkdir -p config/plugins/napcat_adapter
+        if [ -f "template/plugins/napcat_adapter/config.toml" ]; then
+            cp template/plugins/napcat_adapter/config.toml config/plugins/napcat_adapter/
+            sed -i 's/enabled = false/enabled = true/' config/plugins/napcat_adapter/config.toml 2>> "$INSTALL_LOG"
+            echo -e "${GREEN}✓${NC}"
+        fi
+    fi
+    
+    # 配置端口
+    echo ""
+    read -p "请输入Napcat服务器端口 (默认: 8080): " port
+    port=${port:-8080}
+    
+    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
+        local plugin_config="config/plugins/napcat_adapter/config.toml"
+        if [ -f "$plugin_config" ]; then
+            sed -i "s/port = .*/port = $port/" "$plugin_config" 2>> "$INSTALL_LOG"
+            echo -e "${GREEN}✓ 端口配置成功: $port${NC}"
+        fi
+    fi
+    
+    print_message "$GREEN" "✓ 现有MoFox-Core配置完成"
+    return 0
+}
+
+# ============================================
+# 新增：跳转到完成部分
+# ============================================
+
+goto_installation_complete() {
+    # ============================================
+    # 安装完成
+    # ============================================
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+
+    print_header "安装完成"
+
+    echo ""
+    print_message "$GREEN" "╔══════════════════════════════════════════════════════════╗"
+    print_message "$GREEN" "║                     安装完成总结                         ║"
+    print_message "$GREEN" "╠══════════════════════════════════════════════════════════╣"
+    print_message "$CYAN" "║  总用时: $DURATION 秒                                    ║"
+    print_message "$CYAN" "║  日志文件: $INSTALL_LOG                           ║"
+    print_message "$CYAN" "║  脚本版本: $SCRIPT_VERSION                               ║"
+    print_message "$CYAN" "║                                                          ║"
+print_message "$GREEN" "║  安装的软件:                                          ║"
+[ "$INSTALL_MOFOX" = true ] && print_message "$YELLOW" "║    • MoFox-Core                                      ║"
+[ "$INSTALL_NAPCATQQ" = true ] && print_message "$YELLOW" "║    • NapcatQQ                                       ║"
+[ "$INSTALL_1PANLE" = true ] && print_message "$YELLOW" "║    • 1Panel                                         ║"
+[ "$INSTALL_COPLAR" = true ] && print_message "$YELLOW" "║    • Cpolar                                         ║"
+
+# 如果检测到存在但跳过了安装，显示特殊提示
+if [ "$NAPCAT_EXISTS" = true ] && [ "$INSTALL_NAPCATQQ" = false ]; then
+    print_message "$YELLOW" "║    • NapcatQQ (已存在，跳过安装)                       ║"
+fi
+    print_message "$GREEN" "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "安装完成！请按照以下步骤操作："
+    echo ""
+    [ "$INSTALL_MOFOX" = true ] && echo "1. MoFox-Core: 进入 ~/MoFox_Bot_Deployment/MoFox-Core 目录"
+    [ "$INSTALL_MOFOX" = true ] && echo "   激活虚拟环境: source .venv/bin/activate"
+    [ "$INSTALL_MOFOX" = true ] && echo "   启动机器人: python bot.py"
+    echo ""
+    [ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 编辑 /opt/NapCatQQ/config/config.yaml 配置文件"
+    [ "$INSTALL_NAPCATQQ" = true ] && echo "   启动服务: systemctl start napcatqq"
+    echo ""
+    [ "$INSTALL_1PANLE" = true ] && echo "3. 1Panel: 访问 http://<服务器IP>:目标端口"
+    [ "$INSTALL_1PANLE" = true ] && echo "   使用安装时设置的用户名和密码登录"
+    echo ""
+    [ "$INSTALL_COPLAR" = true ] && echo "4. Cpolar: 配置认证令牌: cpolar authtoken <您的token>"
+    [ "$INSTALL_COPLAR" = true ] && echo "   启动服务: systemctl start cpolar"
+    echo ""
+    print_message "$YELLOW" "建议重启系统以确保所有服务正常运行。"
+    echo ""
+
+    log_message "脚本执行完成，总用时: $DURATION 秒"
+
+    # 询问是否重启
+    read -p "是否现在重启系统？(y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        print_message "$YELLOW" "系统将在5秒后重启..."
+        sleep 5
+        reboot
+    fi
+
+    exit 0
 }
 
 # 检查是否以root权限运行
@@ -311,8 +767,20 @@ install_dependencies() {
 }
 
 # 选择安装的软件
+
 select_software() {
     print_header "选择安装的软件"
+    
+    # 如果之前已经询问过NapcatQQ，跳过询问
+    if [ "$INSTALL_NAPCATQQ" = false ] && [ "$NAPCAT_EXISTS" = false ]; then
+        read -p "是否安装 NapcatQQ？(y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            INSTALL_NAPCATQQ=true
+        else
+            print_message "$YELLOW" "✗ 跳过安装 NapcatQQ"
+        fi
+    fi
     
     # 询问是否安装1panle
     read -p "是否安装 1panle？-暂时无法使用，请选择不安装(y/N): " -n 1 -r
@@ -347,10 +815,81 @@ log_message() {
 # 软件安装函数
 # ============================================
 
-# 安装napcatqq
+#安装napcatQQ
 install_napcatqq() {
     print_header "安装 NapcatQQ"
     
+    # 如果用户选择了跳过安装
+    if [ "$INSTALL_NAPCATQQ" = false ]; then
+        print_message "$YELLOW" "用户选择跳过NapcatQQ安装"
+        return 0
+    fi
+    
+    # 检查是否已存在且选择升级模式
+    if [ "$NAPCAT_EXISTS" = true ] && [ -n "${NAPCAT_DIR:-}" ] && [ -d "$NAPCAT_DIR" ]; then
+        print_message "$YELLOW" "检测到现有NapcatQQ安装，尝试升级/修复..."
+        
+        cd "$NAPCAT_DIR" || return 1
+        
+        # 备份配置文件
+        echo -n "备份配置文件... "
+        if [ -f "config/config.yaml" ]; then
+            cp -f config/config.yaml config/config.yaml.backup.$(date +%Y%m%d_%H%M%S)
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}⚠${NC}"
+        fi
+        
+        # 执行升级
+        echo -n "执行升级... "
+        if [ -f "update.sh" ] || [ -f "update" ]; then
+            # 使用现有的更新脚本
+            bash update.sh 2>/dev/null || bash update 2>/dev/null || true
+            echo -e "${GREEN}✓${NC}"
+            print_message "$GREEN" "✓ NapcatQQ升级完成"
+            return 0
+        else
+            echo -e "${YELLOW}⚠${NC}"
+            print_message "$YELLOW" "未找到升级脚本，将尝试重新安装"
+        fi
+    fi
+    
+    # 如果存在但没有指定目录，检查标准位置
+    if [ "$NAPCAT_EXISTS" = true ] && [ -z "${NAPCAT_DIR:-}" ]; then
+        local standard_dirs=(
+            "/opt/NapCatQQ"
+            "/root/Napcat"
+            "/root/NapCatQQ"
+        )
+        
+        for dir in "${standard_dirs[@]}"; do
+            if [ -d "$dir" ]; then
+                NAPCAT_DIR="$dir"
+                print_message "$YELLOW" "使用现有目录: $NAPCAT_DIR"
+                
+                # 询问是否删除后重新安装
+                read -p "是否删除现有目录并重新安装？(y/N): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    echo -n "删除目录... "
+                    rm -rf "$NAPCAT_DIR"
+                    echo -e "${GREEN}✓${NC}"
+                    NAPCAT_EXISTS=false
+                else
+                    # 尝试升级
+                    cd "$NAPCAT_DIR" || return 1
+                    if [ -f "update.sh" ]; then
+                        bash update.sh >> "$INSTALL_LOG" 2>&1
+                        print_message "$GREEN" "✓ NapcatQQ升级完成"
+                        return 0
+                    fi
+                fi
+                break
+            fi
+        done
+    fi
+    
+    # 全新安装或重新安装
     echo -n "创建临时目录... "
     mkdir -p "$TEMP_DIR/napcatqq"
     cd "$TEMP_DIR/napcatqq" || return 1
@@ -370,7 +909,6 @@ install_napcatqq() {
     
     return 0
 }
-
 # 安装coplar
 install_coplar() {
     print_header "安装 Cpolar"
@@ -462,6 +1000,35 @@ install_mofox() {
     
     local start_time=$(date +%s)
     
+    # ============================================
+    # 新增：检查现有目录
+    # ============================================
+    
+    local mofox_dir="$HOME/MoFox_Bot_Deployment"
+    local mofox_core_dir="$mofox_dir/MoFox-Core"
+    
+    if [ -d "$mofox_core_dir" ] && [ "$SKIP_SYSTEM_CHECK" = false ]; then
+        print_message "$YELLOW" "检测到现有MoFox-Core目录，跳过克隆步骤"
+        cd "$mofox_core_dir" || return 1
+        
+        # 检查是否需要重新安装依赖
+        if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
+            print_message "$YELLOW" "虚拟环境不存在或损坏，需要重新安装依赖"
+        else
+            print_message "$GREEN" "虚拟环境已存在，跳过依赖安装"
+            # 直接进入配置步骤
+            if configure_existing_mofox; then
+                local end_time=$(date +%s)
+                local duration=$((end_time - start_time))
+                print_message "$GREEN" "✓ MoFox-Core配置完成 (用时: ${duration}秒)"
+                return 0
+            else
+                print_message "$RED" "✗ 现有MoFox-Core配置失败"
+                return 1
+            fi
+        fi
+    fi
+    
     # 步骤1：安装系统依赖
     echo -n "安装系统依赖包... "
     silent_install "apt update && apt install -y sudo git curl python3 python3-pip python3-venv build-essential screen" "安装系统依赖包" || return 1
@@ -513,54 +1080,118 @@ install_mofox() {
     cd MoFox_Bot_Deployment || return 1
     echo -e "${GREEN}✓${NC}"
 
-    # 步骤6：智能克隆MoFox-Core仓库
-    echo -n "克隆MoFox-Core仓库... "
+# 步骤6：克隆MoFox-Core仓库（多镜像源版本）
+echo "克隆MoFox-Core仓库..."
+
+# 如果已经成功克隆，跳过
+if [ -d "MoFox-Core" ] && [ -d "MoFox-Core/.git" ]; then
+    echo "仓库已存在，跳过克隆"
+    exit 0
+fi
+
+# 清理可能存在的旧目录
+if [ -d "MoFox-Core" ]; then
+    echo "清理旧目录..."
+    rm -rf MoFox-Core
+fi
+
+# 多个镜像源（国内常用加速源）
+clone_sources=(
+    # GitCode 镜像（国内访问快）
+    "https://gitcode.com/mirrors/mofox-studio/mofox-core.git"
     
-    # GitHub源测速
-    declare -A github_sources=(
-        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
-        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
-    )
+    # Gitee 镜像（国内访问非常快）
+    "https://gitee.com/mirrors_mofox/mofox-core.git"
     
-    # 测速函数
-    test_github_speed() {
-        local source_name=$1
-        local test_url=""
+    # 清华大学镜像
+    "https://mirrors.tuna.tsinghua.edu.cn/git/mofox-studio/mofox-core.git"
+    
+    # 阿里云镜像
+    "https://mirrors.aliyun.com/mofox-studio/mofox-core.git"
+    
+    # 中科大镜像
+    "https://mirrors.ustc.edu.cn/mofox-studio/mofox-core.git"
+    
+    # GitHub 直接访问（如果镜像都不行，最后尝试）
+    "https://github.com/MoFox-Studio/MoFox-Core.git"
+    
+    # GitHub 代理（备用）
+    "https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
+    
+    # GitHub 镜像（备用）
+    "https://kgithub.com/MoFox-Studio/MoFox-Core.git"
+)
+
+# 显示所有可用源
+echo "可用镜像源："
+for i in "${!clone_sources[@]}"; do
+    domain=$(echo "${clone_sources[$i]}" | awk -F/ '{print $3}')
+    echo "  $((i+1)). $domain"
+done
+
+# 尝试快速克隆，使用浅克隆减少时间
+clone_success=false
+attempt=0
+max_attempts=3  # 最大尝试次数
+
+while [ $attempt -lt $max_attempts ] && [ "$clone_success" = false ]; do
+    attempt=$((attempt + 1))
+    echo -e "\n第 $attempt 轮尝试..."
+    
+    for url in "${clone_sources[@]}"; do
+        domain=$(echo "$url" | awk -F/ '{print $3}')
+        echo -n "尝试 $domain... "
         
-        case $source_name in
-            "direct") test_url="https://github.com" ;;
-            "ghproxy") test_url="https://ghproxy.com" ;;
-        esac
-        
-        local speed
-        speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
-        local speed_ms
-        speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
-        echo "${speed_ms:-9999}"
-    }
-    
-    # 测速选择
-    local best_source="direct"
-    local best_speed=9999
-    
-    for source_name in "${!github_sources[@]}"; do
-        local speed
-        speed=$(test_github_speed "$source_name")
-        if [ "$speed" -lt "$best_speed" ]; then
-            best_speed="$speed"
-            best_source="$source_name"
+        # 尝试克隆，设置超时
+        # 使用浅克隆(--depth=1)加快速度
+        if timeout 30 git clone --depth=1 "$url" 2>/dev/null; then
+            echo "成功"
+            clone_success=true
+            
+            # 如果需要完整历史记录，可以取消浅克隆
+            # cd MoFox-Core && git fetch --unshallow 2>/dev/null && cd ..
+            
+            break 2  # 跳出两层循环
+        else
+            echo "失败"
+            # 清理失败尝试的残留
+            rm -rf MoFox-Core 2>/dev/null
+            sleep 1  # 短暂延迟避免请求过快
         fi
     done
-    
-    local selected_url="${github_sources[$best_source]}"
-    
-    # 克隆仓库
-    if ! git clone "$selected_url"; then
-        echo -e "${RED}✗ MoFox-Core仓库克隆失败${NC}"
-        return 1
-    fi
-    echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
-    # 步骤7：进入项目目录
+done
+
+# 如果浅克隆失败，尝试完整克隆（最后一轮）
+if [ "$clone_success" = false ]; then
+    echo -e "\n浅克隆失败，尝试完整克隆..."
+    for url in "${clone_sources[@]}"; do
+        domain=$(echo "$url" | awk -F/ '{print $3}')
+        echo -n "完整克隆 $domain... "
+        
+        if timeout 60 git clone "$url" 2>/dev/null; then
+            echo "成功"
+            clone_success=true
+            break
+        else
+            echo "失败"
+            rm -rf MoFox-Core 2>/dev/null
+        fi
+    done
+fi
+
+# 最终检查
+if [ "$clone_success" = true ]; then
+    echo -e "\n✅ MoFox-Core 仓库克隆成功"
+    # 显示版本信息
+    cd MoFox-Core && git log --oneline -1 2>/dev/null && cd ..
+else
+    echo -e "\n❌ 所有源都失败，请检查："
+    echo "1. 网络连接"
+    echo "2. 防火墙设置"
+    echo "3. Git是否安装正确"
+    echo "4. 尝试手动克隆：git clone https://github.com/MoFox-Studio/MoFox-Core.git"
+    exit 1
+fi    # 步骤7：进入项目目录
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
     echo -e "${GREEN}✓${NC}"
@@ -575,51 +1206,28 @@ install_mofox() {
         return 1
     fi
     
-    # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
-    echo "安装Python依赖..."
+# 步骤9：在虚拟环境中安装Python依赖（带重试机制）
+echo "安装Python依赖..."
+
+# 方法1：使用uv指定Python路径（重试3次）
+echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
+if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+    echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+else
+    echo -e "\r${RED}  ✗ 方法1失败${NC}"
     
-    # 方法1：使用uv指定Python路径（重试3次）
-    echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
-    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
-        echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+    # 方法2：先激活虚拟环境再使用uv（重试3次）
+    echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
+    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
     else
-        echo -e "\r${RED}  ✗ 方法1失败${NC}"
+        echo -e "\r${RED}  ✗ 方法2失败${NC}"
         
-        # 方法2：先激活虚拟环境再使用uv（重试3次）
-        echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
-        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
-            echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
-        else
-            echo -e "\r${RED}  ✗ 方法2失败${NC}"
-            
-            # 方法3：直接使用虚拟环境中的pip（最可靠）
-            echo -n "  ↳ 尝试方法3 (使用虚拟环境pip+国内源)... "
-            
-            # 设置pip国内源
-            .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-            .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
-            
-            # 安装依赖，增加超时和重试
-            if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
-                echo -e "${GREEN}✓${NC}"
-                echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境pip+国内源)${NC}"
-            else
-                echo -e "${RED}✗${NC}"
-                
-                # 方法4：分步安装（先装小包，再装大包）
-                echo -n "  ↳ 尝试方法4 (分步安装)... "
-                if install_dependencies_step_by_step; then
-                    echo -e "${GREEN}✓${NC}"
-                    echo -e "\r${GREEN}  ✓ 依赖安装成功 (分步安装)${NC}"
-                else
-                    echo -e "${RED}✗${NC}"
-                    print_message "$RED" "依赖安装完全失败"
-                    return 1
-                fi
-            fi
-        fi
+        # 只保留方法1和2，方法3和4已删除
+        print_message "$RED" "依赖安装完全失败"
+        return 1
     fi
-    
+fi
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
     cp template/template.env .env 2>> "$INSTALL_LOG"
@@ -923,10 +1531,51 @@ clear
 print_mofox_ascii
 print_header "$SCRIPT_NAME v$SCRIPT_VERSION"
 
-# 显示优化说明
+# 首先检查MoFox目录
+check_mofox_directory
+check_mofox_result=$?
+
+# 然后检查Napcat目录（如果用户选择了安装NapcatQQ）
+if [ "$INSTALL_NAPCATQQ" = true ]; then
+    check_napcat_directory
+    check_napcat_result=$?
+fi
+
+# 根据检查结果决定流程
+if [ "$SKIP_SYSTEM_CHECK" = true ] && [ $check_mofox_result -eq 3 ]; then
+    # 快速安装模式
+    # ... 快速安装代码 ...
+    # 快速安装模式
+    echo ""
+    print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+    print_message "$CYAN" "║                     快速安装模式                         ║"
+    print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
+    print_message "$GREEN" "║  ✓ 跳过系统检查                                        ║"
+    print_message "$GREEN" "║  ✓ 跳过系统更新                                        ║"
+    print_message "$GREEN" "║  ✓ 直接进入软件安装                                    ║"
+    print_message "$CYAN" "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # 等待用户确认
+    read -p "是否开始快速安装？(Y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z "$REPLY" ]]; then
+        print_message "$YELLOW" "安装已取消。"
+        exit 0
+    fi
+    
+    # 执行快速安装
+    quick_install_mode
+    
+    # 快速安装完成后，跳到完成部分
+    goto_installation_complete
+    exit $?
+fi
+
+# 正常安装流程（原有流程）
 echo ""
 print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
-print_message "$CYAN" "║                     优化功能说明                         ║"
+print_message "$CYAN" "║                     正常安装模式                         ║"
 print_message "$CYAN" "╠══════════════════════════════════════════════════════════╣"
 print_message "$GREEN" "║  ✓ 自动重试机制 (最大重试: $MAX_RETRIES 次)              ║"
 print_message "$GREEN" "║  ✓ 详细日志记录: $INSTALL_LOG                     ║"
@@ -944,7 +1593,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z "$REPLY" ]]; then
 fi
 
 # ============================================
-# 系统检查和准备
+# 系统检查和准备（正常模式）
 # ============================================
 print_header "系统检查"
 
@@ -1031,45 +1680,7 @@ fi
 # ============================================
 # 安装完成
 # ============================================
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-
-print_header "安装完成"
-
-echo ""
-print_message "$GREEN" "╔══════════════════════════════════════════════════════════╗"
-print_message "$GREEN" "║                     安装完成总结                         ║"
-print_message "$GREEN" "╠══════════════════════════════════════════════════════════╣"
-print_message "$CYAN" "║  总用时: $DURATION 秒                                    ║"
-print_message "$CYAN" "║  日志文件: $INSTALL_LOG                           ║"
-print_message "$CYAN" "║  脚本版本: $SCRIPT_VERSION                               ║"
-print_message "$CYAN" "║                                                          ║"
-print_message "$YELLOW" "║  安装的软件:                                          ║"
-[ "$INSTALL_MOFOX" = true ] && print_message "$YELLOW" "║    • MoFox-Core                                      ║"
-[ "$INSTALL_NAPCATQQ" = true ] && print_message "$YELLOW" "║    • NapcatQQ                                       ║"
-[ "$INSTALL_1PANLE" = true ] && print_message "$YELLOW" "║    • 1Panel                                         ║"
-[ "$INSTALL_COPLAR" = true ] && print_message "$YELLOW" "║    • Cpolar                                         ║"
-print_message "$GREEN" "╚══════════════════════════════════════════════════════════╝"
-echo ""
-echo "安装完成！请按照以下步骤操作："
-echo ""
-[ "$INSTALL_MOFOX" = true ] && echo "1. MoFox-Core: 进入 ~/MoFox_Bot_Deployment/MoFox-Core 目录"
-[ "$INSTALL_MOFOX" = true ] && echo "   激活虚拟环境: source .venv/bin/activate"
-[ "$INSTALL_MOFOX" = true ] && echo "   启动机器人: python bot.py"
-echo ""
-[ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 编辑 /opt/NapCatQQ/config/config.yaml 配置文件"
-[ "$INSTALL_NAPCATQQ" = true ] && echo "   启动服务: systemctl start napcatqq"
-echo ""
-[ "$INSTALL_1PANLE" = true ] && echo "3. 1Panel: 访问 http://<服务器IP>:目标端口"
-[ "$INSTALL_1PANLE" = true ] && echo "   使用安装时设置的用户名和密码登录"
-echo ""
-[ "$INSTALL_COPLAR" = true ] && echo "4. Cpolar: 配置认证令牌: cpolar authtoken <您的token>"
-[ "$INSTALL_COPLAR" = true ] && echo "   启动服务: systemctl start cpolar"
-echo ""
-print_message "$YELLOW" "建议重启系统以确保所有服务正常运行。"
-echo ""
-
-log_message "脚本执行完成，总用时: $DURATION 秒"
+goto_installation_complete
 
 # 询问是否重启
 read -p "是否现在重启系统？(y/N): " -n 1 -r
