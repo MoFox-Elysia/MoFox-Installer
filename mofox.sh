@@ -88,6 +88,7 @@ format_speed() {
 }
 
 # 网络测速函数（增强版）
+# 网络测速函数（增强版）- 只返回速度值
 test_github_speed_enhanced() {
     local source_name=$1
     local test_url=""
@@ -129,7 +130,7 @@ test_github_speed_enhanced() {
     fi
 }
 
-# 智能选择GitHub源
+# 智能选择GitHub源 - 修改为设置全局变量
 select_fastest_github_source() {
     echo -n "正在测试GitHub代理速度..."
     
@@ -140,14 +141,16 @@ select_fastest_github_source() {
     local direct_url="https://github.com/MoFox-Studio/MoFox-Core.git"
     
     # 测试直接连接
+    echo -e "\n  ↳ 直连速度..."
     local direct_speed
     direct_speed=$(test_github_speed_enhanced "direct")
     github_sources["direct"]="${direct_url}"
     
-    echo -e "\n  ↳ 直连速度: $(format_speed ${direct_speed})"
-    
-    if [ "${direct_speed}" -gt 0 ] && [ "${direct_speed}" -lt 9999 ]; then
+    if [ "${direct_speed}" -lt 9999 ] && [ "${direct_speed}" -gt 0 ]; then
+        echo -e "\r  ↳ 直连速度: $(format_speed ${direct_speed})"
         best_speed=${direct_speed}
+    else
+        echo -e "\r  ↳ 直连速度: ${RED}失败${NC}"
     fi
     
     # 测试所有代理
@@ -191,7 +194,8 @@ select_fastest_github_source() {
     
     echo -e "\n${GREEN}✓ 选择最快源: ${best_source} ($(format_speed ${best_speed}))${NC}"
     
-    echo "${selected_url}"
+    # 设置全局变量而不是直接输出
+    FASTEST_GITHUB_URL="${selected_url}"
 }
 
 # ============================================
