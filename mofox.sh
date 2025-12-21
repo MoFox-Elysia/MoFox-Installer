@@ -445,7 +445,7 @@ install_dependencies() {
     print_header "安装依赖包"
     
     echo -n "安装基础依赖... "
-    silent_install "apt-get install -y curl wget git sudo build-essential software-properties-common apt-transport-https ca-certificates gnupg lsb-release net-tools htop vim nano" "安装基础依赖" || return 1
+    silent_install "apt-get install -y curl wget git sudo build-essential " "安装基础依赖" || return 1
     
     print_message "$GREEN" "✓ 依赖包安装完成"
     return 0
