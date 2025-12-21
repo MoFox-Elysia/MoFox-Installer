@@ -1080,117 +1080,53 @@ install_mofox() {
     cd MoFox_Bot_Deployment || return 1
     echo -e "${GREEN}✓${NC}"
 
-# 步骤6：克隆MoFox-Core仓库（多镜像源版本）
-echo "克隆MoFox-Core仓库..."
-
-# 如果已经成功克隆，跳过
-if [ -d "MoFox-Core" ] && [ -d "MoFox-Core/.git" ]; then
-    echo "仓库已存在，跳过克隆"
-    exit 0
-fi
-
-# 清理可能存在的旧目录
-if [ -d "MoFox-Core" ]; then
-    echo "清理旧目录..."
-    rm -rf MoFox-Core
-fi
-
-# 多个镜像源（国内常用加速源）
-clone_sources=(
-    # GitCode 镜像（国内访问快）
-    "https://gitcode.com/mirrors/mofox-studio/mofox-core.git"
+   # 步骤6：智能克隆MoFox-Core仓库
+    echo -n "克隆MoFox-Core仓库... "
     
-    # Gitee 镜像（国内访问非常快）
-    "https://gitee.com/mirrors_mofox/mofox-core.git"
+    # GitHub源测速
+    declare -A github_sources=(
+        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
+        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
+    )
     
-    # 清华大学镜像
-    "https://mirrors.tuna.tsinghua.edu.cn/git/mofox-studio/mofox-core.git"
-    
-    # 阿里云镜像
-    "https://mirrors.aliyun.com/mofox-studio/mofox-core.git"
-    
-    # 中科大镜像
-    "https://mirrors.ustc.edu.cn/mofox-studio/mofox-core.git"
-    
-    # GitHub 直接访问（如果镜像都不行，最后尝试）
-    "https://github.com/MoFox-Studio/MoFox-Core.git"
-    
-    # GitHub 代理（备用）
-    "https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
-    
-    # GitHub 镜像（备用）
-    "https://kgithub.com/MoFox-Studio/MoFox-Core.git"
-)
-
-# 显示所有可用源
-echo "可用镜像源："
-for i in "${!clone_sources[@]}"; do
-    domain=$(echo "${clone_sources[$i]}" | awk -F/ '{print $3}')
-    echo "  $((i+1)). $domain"
-done
-
-# 尝试快速克隆，使用浅克隆减少时间
-clone_success=false
-attempt=0
-max_attempts=3  # 最大尝试次数
-
-while [ $attempt -lt $max_attempts ] && [ "$clone_success" = false ]; do
-    attempt=$((attempt + 1))
-    echo -e "\n第 $attempt 轮尝试..."
-    
-    for url in "${clone_sources[@]}"; do
-        domain=$(echo "$url" | awk -F/ '{print $3}')
-        echo -n "尝试 $domain... "
+    # 测速函数
+    test_github_speed() {
+        local source_name=$1
+        local test_url=""
         
-        # 尝试克隆，设置超时
-        # 使用浅克隆(--depth=1)加快速度
-        if timeout 30 git clone --depth=1 "$url" 2>/dev/null; then
-            echo "成功"
-            clone_success=true
-            
-            # 如果需要完整历史记录，可以取消浅克隆
-            # cd MoFox-Core && git fetch --unshallow 2>/dev/null && cd ..
-            
-            break 2  # 跳出两层循环
-        else
-            echo "失败"
-            # 清理失败尝试的残留
-            rm -rf MoFox-Core 2>/dev/null
-            sleep 1  # 短暂延迟避免请求过快
+        case $source_name in
+            "direct") test_url="https://github.com" ;;
+            "ghproxy") test_url="https://ghproxy.com" ;;
+        esac
+        
+        local speed
+        speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
+        local speed_ms
+        speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
+        echo "${speed_ms:-9999}"
+    }
+    
+    # 测速选择
+    local best_source="direct"
+    local best_speed=9999
+    
+    for source_name in "${!github_sources[@]}"; do
+        local speed
+        speed=$(test_github_speed "$source_name")
+        if [ "$speed" -lt "$best_speed" ]; then
+            best_speed="$speed"
+            best_source="$source_name"
         fi
     done
-done
-
-# 如果浅克隆失败，尝试完整克隆（最后一轮）
-if [ "$clone_success" = false ]; then
-    echo -e "\n浅克隆失败，尝试完整克隆..."
-    for url in "${clone_sources[@]}"; do
-        domain=$(echo "$url" | awk -F/ '{print $3}')
-        echo -n "完整克隆 $domain... "
-        
-        if timeout 60 git clone "$url" 2>/dev/null; then
-            echo "成功"
-            clone_success=true
-            break
-        else
-            echo "失败"
-            rm -rf MoFox-Core 2>/dev/null
-        fi
-    done
-fi
-
-# 最终检查
-if [ "$clone_success" = true ]; then
-    echo -e "\n✅ MoFox-Core 仓库克隆成功"
-    # 显示版本信息
-    cd MoFox-Core && git log --oneline -1 2>/dev/null && cd ..
-else
-    echo -e "\n❌ 所有源都失败，请检查："
-    echo "1. 网络连接"
-    echo "2. 防火墙设置"
-    echo "3. Git是否安装正确"
-    echo "4. 尝试手动克隆：git clone https://github.com/MoFox-Studio/MoFox-Core.git"
-    exit 1
+    
+    local selected_url="${github_sources[$best_source]}"
+    
+    # 克隆仓库
+    if ! git clone "$selected_url"; then
+        echo -e "${RED}✗ MoFox-Core仓库克隆失败${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
 fi    # 步骤7：进入项目目录
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
@@ -1206,27 +1142,152 @@ fi    # 步骤7：进入项目目录
         return 1
     fi
     
+# 步骤8.5：为llvmlite创建独立的Python 3.9环境
+setup_python39_for_llvmlite() {
+    echo "为llvmlite创建独立的Python 3.9环境..."
+    
+    # 检查是否已安装Python 3.9
+    if ! command -v python3.9 &> /dev/null; then
+        echo "未找到Python 3.9，开始安装..."
+        
+        # 根据不同系统安装Python 3.9
+        if [ -f /etc/debian_version ] || [ -f /etc/debian_release ]; then
+            # Debian/Ubuntu
+            apt-get update
+            apt-get install -y python3.9 python3.9-venv python3.9-dev
+        elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
+            # RHEL/CentOS
+            yum install -y python39 python39-devel
+        elif [ -f /etc/arch-release ]; then
+            # Arch Linux
+            pacman -S python39 --noconfirm
+        elif [ -f /etc/alpine-release ]; then
+            # Alpine Linux
+            apk add python39 py3-pip
+        else
+            echo "无法自动安装Python 3.9，请手动安装"
+            echo "可以尝试: https://www.python.org/downloads/"
+            return 1
+        fi
+    fi
+    
+    # 创建独立的Python 3.9虚拟环境
+    echo "创建独立的Python 3.9虚拟环境..."
+    python3.9 -m venv .venv-llvmlite
+    
+    # 激活环境并安装llvmlite
+    echo "在Python 3.9环境中安装llvmlite..."
+    if source .venv-llvmlite/bin/activate && \
+       .venv-llvmlite/bin/pip install llvmlite==0.36.0; then
+        echo "✅ Python 3.9环境中llvmlite安装成功"
+        deactivate
+        return 0
+    else
+        echo "❌ Python 3.9环境中llvmlite安装失败"
+        deactivate
+        return 1
+    fi
+}
+
 # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
 echo "安装Python依赖..."
 
+# 检查是否需要使用独立的Python 3.9环境
+check_python_version_for_llvmlite() {
+    local python_version
+    python_version=$(python --version 2>&1 | awk '{print $2}')
+    
+    # 检查是否是Python 3.12或更高版本（llvmlite 0.36.0不支持）
+    local major
+    local minor
+    major=$(echo "$python_version" | cut -d. -f1)
+    minor=$(echo "$python_version" | cut -d. -f2)
+    
+    if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
+        echo "检测到Python $python_version，llvmlite 0.36.0需要Python 3.9"
+        return 0  # 需要独立环境
+    else
+        echo "Python $python_version 兼容llvmlite 0.36.0"
+        return 1  # 不需要独立环境
+    fi
+}
+
+# 如果Python版本>=3.12，设置独立环境
+if check_python_version_for_llvmlite; then
+    echo "当前Python版本不兼容llvmlite 0.36.0"
+    
+    # 询问用户是否要使用独立环境
+    read -p "是否要为llvmlite创建独立的Python 3.9环境？(y/n): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        # 方案1：使用独立的Python 3.9环境
+        setup_python39_for_llvmlite
+        
+        # 修改requirements.txt，排除llvmlite
+        echo "修改requirements.txt，排除llvmlite..."
+        if [ -f requirements.txt ]; then
+            # 备份原文件
+            cp requirements.txt requirements.txt.backup
+            
+            # 创建不包含llvmlite的requirements
+            grep -v llvmlite requirements.txt > requirements_no_llvmlite.txt
+            
+            # 安装其他依赖
+            echo "安装其他Python依赖..."
+        fi
+    else
+        # 方案2：尝试安装兼容版本
+        echo "尝试安装兼容的llvmlite版本..."
+        if ! .venv/bin/pip install llvmlite==0.41.1 2>/dev/null; then
+            echo "尝试从源码安装llvmlite..."
+            .venv/bin/pip install --no-binary llvmlite llvmlite
+        fi
+    fi
+fi
+
 # 方法1：使用uv指定Python路径（重试3次）
 echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
-if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+
+# 如果有修改后的requirements文件，使用它
+if [ -f requirements_no_llvmlite.txt ]; then
+    REQUIREMENTS_FILE="requirements_no_llvmlite.txt"
+else
+    REQUIREMENTS_FILE="requirements.txt"
+fi
+
+if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r $REQUIREMENTS_FILE" "方法1: uv安装依赖"; then
     echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+    
+    # 如果使用了独立的llvmlite环境，添加环境变量
+    if [ -d ".venv-llvmlite" ]; then
+        echo "设置LLVM环境变量..."
+        export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config
+    fi
 else
     echo -e "\r${RED}  ✗ 方法1失败${NC}"
     
     # 方法2：先激活虚拟环境再使用uv（重试3次）
     echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
-    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r $REQUIREMENTS_FILE" "方法2: 激活环境后uv安装"; then
         echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
+        
+        # 如果使用了独立的llvmlite环境，添加环境变量
+        if [ -d ".venv-llvmlite" ]; then
+            echo "设置LLVM环境变量..."
+            export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config
+            # 写入激活脚本，使环境变量永久生效
+            echo "export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config" >> .venv/bin/activate
+        fi
     else
         echo -e "\r${RED}  ✗ 方法2失败${NC}"
-        
-        # 只保留方法1和2，方法3和4已删除
         print_message "$RED" "依赖安装完全失败"
         return 1
     fi
+fi
+
+# 清理临时文件
+if [ -f requirements_no_llvmlite.txt ]; then
+    rm -f requirements_no_llvmlite.txt
 fi
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
