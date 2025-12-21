@@ -265,12 +265,12 @@ print_mofox_ascii() {
     echo ""
     print_message "$BLUE" "╔═══════════════════════════════════════╗"
     print_message "$BLUE" "║                                       ║"
-    print_message "$BLUE" "║         ███╗   ███╗ ██████╗          ║"
-    print_message "$GREEN" "║         ████╗ ████║██╔═══██╗         ║"
-    print_message "$GREEN" "║         ██╔████╔██║██║   ██║         ║"
-    print_message "$YELLOW" "║         ██║╚██╔╝██║██║   ██║         ║"
-    print_message "$YELLOW" "║         ██║ ╚═╝ ██║╚██████╔╝         ║"
-    print_message "$RED" "║         ╚═╝     ╚═╝ ╚═════╝          ║"
+    print_message "$BLUE" "║          ███╗   ███╗ ██████╗          ║"
+    print_message "$GREEN" "║          ████╗ ████║██╔═══██╗         ║"
+    print_message "$GREEN" "║          ██╔████╔██║██║   ██║         ║"
+    print_message "$YELLOW" "║          ██║╚██╔╝██║██║   ██║         ║"
+    print_message "$YELLOW" "║          ██║ ╚═╝ ██║╚██████╔╝         ║"
+    print_message "$RED" "║          ╚═╝     ╚═╝ ╚═════╝          ║"
     print_message "$RED" "║         ███████╗ ██████╗ ██╗  ██╗     ║"
     print_message "$MAGENTA" "║         ██╔════╝██╔═══██╗╚██╗██╔╝     ║"
     print_message "$MAGENTA" "║         █████╗  ██║   ██║ ╚███╔╝      ║"
@@ -279,6 +279,7 @@ print_mofox_ascii() {
     print_message "$BLUE" "║         ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
+
 }
 
 # 检查是否以root权限运行
