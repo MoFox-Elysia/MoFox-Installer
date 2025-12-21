@@ -52,151 +52,6 @@ INSTALL_NAPCATQQ=true
 INSTALL_1PANLE=false
 INSTALL_COPLAR=false
 
-# ============================================
-# 增强版网络测速功能
-# ============================================
-
-# 代理服务器列表
-declare -a GITHUB_PROXY_SERVERS=(
-    "https://ghfast.top"
-    "https://git.yylx.win/"
-    "https://gh-proxy.com"
-    "https://ghfile.geekertao.top"
-    "https://gh-proxy.net"
-    "https://j.1win.ggff.net"
-    "https://ghm.078465.xyz"
-    "https://gitproxy.127731.xyz"
-    "https://jiashu.1win.eu.org"
-    "https://github.tbedu.top"
-)
-
-# 速度格式转换函数
-format_speed() {
-    local speed_bps=$1
-    if (( speed_bps >= 1048576 )); then
-        # MB/s
-        local speed_mbs=$((speed_bps / 1048576))
-        echo "${speed_mbs} MB/s"
-    elif (( speed_bps >= 1024 )); then
-        # KB/s
-        local speed_kbs=$((speed_bps / 1024))
-        echo "${speed_kbs} KB/s"
-    else
-        # B/s
-        echo "${speed_bps} B/s"
-    fi
-}
-
-# 网络测速函数（增强版）
-# 网络测速函数（增强版）- 只返回速度值
-test_github_speed_enhanced() {
-    local source_name=$1
-    local test_url=""
-    local timeout=5
-    local check_url="https://raw.githubusercontent.com/MoFox-Studio/MoFox-Core/main/README.md"
-    
-    case $source_name in
-        "direct") test_url="https://github.com" ;;
-        "ghproxy") test_url="https://ghproxy.com" ;;
-        "ghfast") test_url="https://ghfast.top" ;;
-        "git.yylx") test_url="https://git.yylx.win" ;;
-        "gh-proxy") test_url="https://gh-proxy.com" ;;
-        "ghfile") test_url="https://ghfile.geekertao.top" ;;
-        "j.1win") test_url="https://j.1win.ggff.net" ;;
-        "ghm") test_url="https://ghm.078465.xyz" ;;
-        "gitproxy") test_url="https://gitproxy.127731.xyz" ;;
-        "jiashu") test_url="https://jiashu.1win.eu.org" ;;
-        "github.tbedu") test_url="https://github.tbedu.top" ;;
-    esac
-    
-    # 构建测试URL
-    local test_target="${test_url}/${check_url}"
-    
-    # 使用curl测试速度
-    local curl_output
-    curl_output=$(curl -k -L --connect-timeout ${timeout} --max-time $((timeout * 3)) \
-        -o /dev/null -s -w "%{http_code}:%{exitcode}:%{speed_download}" \
-        "${test_target}" 2>/dev/null || echo "9999:9999:0")
-    
-    local status=$(echo "${curl_output}" | cut -d: -f1)
-    local curl_exit_code=$(echo "${curl_output}" | cut -d: -f2)
-    local download_speed=$(echo "${curl_output}" | cut -d: -f3 | cut -d. -f1)
-    
-    # 如果HTTP状态码不是200或curl退出码非0，视为失败
-    if [ "${curl_exit_code}" -ne 0 ] || [ "${status}" -ne 200 ]; then
-        echo "9999"
-    else
-        echo "${download_speed:-0}"
-    fi
-}
-
-# 智能选择GitHub源 - 修改为设置全局变量
-select_fastest_github_source() {
-    echo -n "正在测试GitHub代理速度..."
-    
-    # 测试所有代理源
-    declare -A github_sources
-    local best_source="direct"
-    local best_speed=0
-    local direct_url="https://github.com/MoFox-Studio/MoFox-Core.git"
-    
-    # 测试直接连接
-    echo -e "\n  ↳ 直连速度..."
-    local direct_speed
-    direct_speed=$(test_github_speed_enhanced "direct")
-    github_sources["direct"]="${direct_url}"
-    
-    if [ "${direct_speed}" -lt 9999 ] && [ "${direct_speed}" -gt 0 ]; then
-        echo -e "\r  ↳ 直连速度: $(format_speed ${direct_speed})"
-        best_speed=${direct_speed}
-    else
-        echo -e "\r  ↳ 直连速度: ${RED}失败${NC}"
-    fi
-    
-    # 测试所有代理
-    local proxy_index=1
-    for proxy in "${GITHUB_PROXY_SERVERS[@]}"; do
-        local proxy_name
-        case $proxy in
-            "https://ghfast.top") proxy_name="ghfast" ;;
-            "https://git.yylx.win/") proxy_name="git.yylx" ;;
-            "https://gh-proxy.com") proxy_name="gh-proxy" ;;
-            "https://ghfile.geekertao.top") proxy_name="ghfile" ;;
-            "https://j.1win.ggff.net") proxy_name="j.1win" ;;
-            "https://ghm.078465.xyz") proxy_name="ghm" ;;
-            "https://gitproxy.127731.xyz") proxy_name="gitproxy" ;;
-            "https://jiashu.1win.eu.org") proxy_name="jiashu" ;;
-            "https://github.tbedu.top") proxy_name="github.tbedu" ;;
-            *) proxy_name="proxy_${proxy_index}" ;;
-        esac
-        
-        local speed
-        speed=$(test_github_speed_enhanced "${proxy_name}")
-        
-        if [ "${speed}" -lt 9999 ] && [ "${speed}" -gt 0 ]; then
-            local proxy_url="${proxy}/https://github.com/MoFox-Studio/MoFox-Core.git"
-            github_sources["${proxy_name}"]="${proxy_url}"
-            
-            echo -e "  ↳ 代理${proxy_index} (${proxy_name}): $(format_speed ${speed})"
-            
-            if [ "${speed}" -gt "${best_speed}" ]; then
-                best_speed=${speed}
-                best_source="${proxy_name}"
-            fi
-        else
-            echo -e "  ↳ 代理${proxy_index} (${proxy_name}): ${RED}失败${NC}"
-        fi
-        
-        ((proxy_index++))
-    done
-    
-    local selected_url="${github_sources[$best_source]}"
-    
-    echo -e "\n${GREEN}✓ 选择最快源: ${best_source} ($(format_speed ${best_speed}))${NC}"
-    
-    # 设置全局变量而不是直接输出
-    FASTEST_GITHUB_URL="${selected_url}"
-}
 
 # ============================================
 # 函数定义
@@ -657,21 +512,54 @@ install_mofox() {
     mkdir -p MoFox_Bot_Deployment
     cd MoFox_Bot_Deployment || return 1
     echo -e "${GREEN}✓${NC}"
-    
-    # 步骤6：智能克隆MoFox-Core仓库（使用增强版测速）
+
+    # 步骤6：智能克隆MoFox-Core仓库
     echo -n "克隆MoFox-Core仓库... "
     
-    # 使用增强版测速选择最快源
-    local selected_url
-    selected_url=$(select_fastest_github_source)
+    # GitHub源测速
+    declare -A github_sources=(
+        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
+        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
+    )
+    
+    # 测速函数
+    test_github_speed() {
+        local source_name=$1
+        local test_url=""
+        
+        case $source_name in
+            "direct") test_url="https://github.com" ;;
+            "ghproxy") test_url="https://ghproxy.com" ;;
+        esac
+        
+        local speed
+        speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
+        local speed_ms
+        speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
+        echo "${speed_ms:-9999}"
+    }
+    
+    # 测速选择
+    local best_source="direct"
+    local best_speed=9999
+    
+    for source_name in "${!github_sources[@]}"; do
+        local speed
+        speed=$(test_github_speed "$source_name")
+        if [ "$speed" -lt "$best_speed" ]; then
+            best_speed="$speed"
+            best_source="$source_name"
+        fi
+    done
+    
+    local selected_url="${github_sources[$best_source]}"
     
     # 克隆仓库
     if ! git clone "$selected_url"; then
         echo -e "${RED}✗ MoFox-Core仓库克隆失败${NC}"
         return 1
     fi
-    echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"
-    
+    echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
     # 步骤7：进入项目目录
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
