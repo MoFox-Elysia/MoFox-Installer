@@ -591,19 +591,12 @@ else
     else
         echo -e "\r${RED}  ✗ 方法2失败${NC}"
         
-        # 方法3：直接使用虚拟环境中的pip（最可靠）
-        echo -n "  ↳ 尝试方法3 (使用虚拟环境pip+国内源)... "
-        
-        # 设置pip国内源
-        .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-        .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
-        
-        # 安装依赖，增加超时和重试
-        if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
-            echo -e "${GREEN}✓${NC}"
-            echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境pip+国内源)${NC}"
-        else
-            echo -e "${RED}✗${NC}"
+       # 使用复制模式而不是硬链接
+echo -n "  ↳ 尝试方法3 (使用复制模式)... "
+    if retry_command UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
             
             # 方法4：分步安装（先装小包，再装大包）
             echo -n "  ↳ 尝试方法4 (分步安装)... "
