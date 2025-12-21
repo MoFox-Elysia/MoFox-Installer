@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.7.1bate
+# 版本：2.7.3bate
 # ============================================
 
 # 脚本功能说明：
@@ -574,46 +574,50 @@ install_mofox() {
         return 1
     fi
     
-    # 步骤9：在虚拟环境中安装Python依赖
-    echo -n "安装Python依赖... "
+  # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
+update_section_progress "安装Python依赖"
+
+# 方法1：使用uv指定Python路径（重试3次）
+echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
+if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+    echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+else
+    echo -e "\r${RED}  ✗ 方法1失败${NC}"
     
-    # 使用复制模式而不是硬链接
-    if UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt; then
-        echo -e "${GREEN}✓${NC}"
+    # 方法2：先激活虚拟环境再使用uv（重试3次）
+    echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
+    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
     else
-        echo -e "${RED}✗${NC}"
+        echo -e "\r${RED}  ✗ 方法2失败${NC}"
         
-        # 方法2：先激活虚拟环境再使用uv
-        echo -n "尝试在激活的虚拟环境中使用uv... "
-        if source .venv/bin/activate && uv pip install -r requirements.txt; then
+        # 方法3：直接使用虚拟环境中的pip（最可靠）
+        echo -n "  ↳ 尝试方法3 (使用虚拟环境pip+国内源)... "
+        
+        # 设置pip国内源
+        .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+        .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+        
+        # 安装依赖，增加超时和重试
+        if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
             echo -e "${GREEN}✓${NC}"
+            echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用虚拟环境pip+国内源)${NC}"
         else
             echo -e "${RED}✗${NC}"
             
-            # 方法3：直接使用虚拟环境中的pip（最可靠）
-            echo -n "尝试使用虚拟环境中的pip（设置国内源）... "
-            
-            # 设置pip国内源
-            .venv/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-            .venv/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
-            
-            # 安装依赖，增加超时和重试
-            if timeout 300 .venv/bin/pip install --default-timeout=100 --retries 3 -r requirements.txt; then
+            # 方法4：分步安装（先装小包，再装大包）
+            echo -n "  ↳ 尝试方法4 (分步安装)... "
+            if install_dependencies_step_by_step; then
                 echo -e "${GREEN}✓${NC}"
+                echo -e "\r${GREEN}  ✓ 依赖安装成功 (分步安装)${NC}"
             else
                 echo -e "${RED}✗${NC}"
-                
-                # 方法4：分步安装（先装小包，再装大包）
-                if install_dependencies_step_by_step; then
-                    echo -e "${GREEN}✓${NC}"
-                else
-                    echo -e "${RED}✗${NC}"
-                    print_message "$RED" "依赖安装完全失败"
-                    return 1
-                fi
+                print_message "$RED" "依赖安装完全失败"
+                return 1
             fi
         fi
     fi
+fi
     
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
