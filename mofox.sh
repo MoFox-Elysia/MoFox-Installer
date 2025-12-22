@@ -192,13 +192,12 @@ check_mofox_directory() {
         
         # 询问用户操作选项
         print_message "$CYAN" "请选择操作："
-        echo -e "${CYAN}1) 重新安装MoFox-Core (删除现有目录并重新安装)"
-        echo -e "${CYAN}2) 继续使用现有目录安装 (仅更新/修复)"
-        echo -e "${CYAN}3) 跳过系统检查，直接从软件选择开始"
-        echo -e "${CYAN}4) 正常完整安装 (忽略现有目录)"
+        echo -e "${CYAN}1)删除现有 MoFox-Core "
+        echo -e "${CYAN}2) 跳过系统检查，直接从软件选择开始"
+        echo -e "${CYAN}3) 正常完整安装"
         
         while true; do
-            read -p "请选择 [1/2/3/4]: " choice
+            read -p "请选择 [1/2/3]: " choice
             case $choice in
                 1)
                     print_message "$YELLOW" "您选择了重新安装MoFox-Core"
@@ -217,23 +216,18 @@ check_mofox_directory() {
                         return 1
                     fi
                     ;;
+               
                 2)
-                    print_message "$GREEN" "您选择了继续使用现有目录安装"
-                    print_message "$YELLOW" "注意：如果安装失败，可能需要清理现有目录"
+                    print_message "$GREEN" "您选择了跳过系统检查"
                     SKIP_SYSTEM_CHECK=true
                     return 2
                     ;;
                 3)
-                    print_message "$GREEN" "您选择了跳过系统检查"
-                    SKIP_SYSTEM_CHECK=true
-                    return 3
-                    ;;
-                4)
                     print_message "$GREEN" "您选择了正常完整安装"
                     return 0
                     ;;
                 *)
-                    echo -e "${RED}无效选择，请输入1-4${NC}"
+                    echo -e "${RED}无效选择，请输入1-3${NC}"
                     ;;
             esac
         done
@@ -262,24 +256,12 @@ check_napcat_directory() {
     
     # 扩展搜索路径，包含更多可能的目录
     local search_paths=(
-        "/opt/NapCatQQ"
-        "/opt/napcatqq"
         "/opt/Napcat"
-        "/usr/local/NapCatQQ"
-        "/usr/local/napcatqq"
         "/usr/local/Napcat"
-        "$HOME/NapCatQQ"
-        "$HOME/napcatqq"
         "$HOME/Napcat"
-        "/root/NapCatQQ"
-        "/root/napcatqq"
         "/root/Napcat"
-        "/home/$USER/NapCatQQ"
-        "/home/$USER/napcatqq"
         "/home/$USER/Napcat"
-        "/var/lib/NapCatQQ"
-        "/srv/NapCatQQ"
-        "/data/NapCatQQ"
+
     )
     
     # 使用find命令进行更广泛的搜索
@@ -351,71 +333,24 @@ check_napcat_directory() {
         
         # 询问用户操作选项
         print_message "$CYAN" "请选择NapcatQQ安装操作："
-        echo -e "${CYAN}1) 重新安装NapcatQQ (删除现有目录并重新安装)"
-        echo -e "${CYAN}2) 升级/修复安装 (保留配置文件)"
-        echo -e "${CYAN}3) 跳过安装NapcatQQ"
-        echo -e "${CYAN}4) 正常安装 (忽略现有目录，可能覆盖)"
+        echo -e "${CYAN}1) 跳过安装NapcatQQ"
+        echo -e "${CYAN}2) 正常安装 (忽略现有目录，可能覆盖)"
         
         while true; do
-            read -p "请选择 [1/2/3/4]: " choice
+            read -p "请选择 [1/2]: " choice
             case $choice in
                 1)
-                    print_message "$YELLOW" "您选择了重新安装NapcatQQ"
-                    print_message "$RED" "警告：这将删除现有NapcatQQ目录并重新安装！"
-                    
-                    # 停止服务
-                    echo -n "停止NapcatQQ服务... "
-                    systemctl stop napcatqq 2>/dev/null
-                    systemctl disable napcatqq 2>/dev/null
-                    echo -e "${GREEN}✓${NC}"
-                    
-                    # 删除找到的所有目录
-                    echo -n "删除NapcatQQ目录... "
-                    for dir in "${found_dirs[@]}"; do
-                        if [ -d "$dir" ]; then
-                            rm -rf "$dir" 2>/dev/null
-                            echo -e "\n  删除: $dir"
-                        fi
-                    done
-                    
-                    # 清理服务文件
-                    echo -n "清理服务文件... "
-                    rm -f /etc/systemd/system/napcatqq.service 2>/dev/null
-                    rm -f /lib/systemd/system/napcatqq.service 2>/dev/null
-                    systemctl daemon-reload 2>/dev/null
-                    echo -e "${GREEN}✓${NC}"
-                    
-                    print_message "$GREEN" "已清理现有安装，将重新安装NapcatQQ"
-                    NAPCAT_EXISTS=false
-                    sleep 2
+                    print_message "$YELLOW" "您选择了跳过安装NapcatQQ"
+                    INSTALL_NAPCATQQ=false
                     return 1
                     ;;
                 2)
-                    print_message "$GREEN" "您选择了升级/修复安装"
-                    print_message "$YELLOW" "将尝试升级现有NapcatQQ安装"
-                    NAPCAT_EXISTS=true  # 标记为存在，后续会尝试升级
-                    
-                    # 设置主目录
-                    if [ ${#found_dirs[@]} -gt 0 ]; then
-                        NAPCAT_DIR="${found_dirs[0]}"
-                        export NAPCAT_DIR
-                        print_message "$GREEN" "将使用目录: $NAPCAT_DIR"
-                    fi
-                    
-                    return 2
-                    ;;
-                3)
-                    print_message "$YELLOW" "您选择了跳过安装NapcatQQ"
-                    INSTALL_NAPCATQQ=false
-                    return 3
-                    ;;
-                4)
                     print_message "$GREEN" "您选择了正常安装"
                     print_message "$YELLOW" "注意：如果安装失败，可能需要清理现有目录"
-                    return 4
+                    return 2
                     ;;
                 *)
-                    echo -e "${RED}无效选择，请输入1-4${NC}"
+                    echo -e "${RED}无效选择，请输入1-2${NC}"
                     ;;
             esac
         done
@@ -517,7 +452,7 @@ configure_existing_mofox() {
     
     # 配置端口
     echo ""
-    read -p "请输入Napcat服务器端口 (默认: 8080): " port
+    read -p "请输入Napcat连接端口 (默认: 8080): " port
     port=${port:-8080}
     
     if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
@@ -964,70 +899,11 @@ install_1panle() {
     fi
 }
 
-# 分步安装依赖函数
-install_dependencies_step_by_step() {
-    echo "  ↳ 尝试分步安装依赖..."
-    
-    # 创建一个临时requirements.txt，逐个安装
-    local temp_req="/tmp/requirements_step.txt"
-    
-    # 首先尝试安装小包
-    echo "asyncio" > "$temp_req"
-    echo "aiohttp" >> "$temp_req"
-    
-    if timeout 180 .venv/bin/pip install --default-timeout=60 -r "$temp_req"; then
-        # 安装剩余的依赖
-        rm -f "$temp_req"
-        # 排除已经安装的包
-        grep -v -E "^(asyncio|aiohttp)" requirements.txt > "$temp_req"
-        
-        if timeout 600 .venv/bin/pip install --default-timeout=120 -r "$temp_req"; then
-            rm -f "$temp_req"
-            return 0
-        else
-            rm -f "$temp_req"
-            return 1
-        fi
-    else
-        rm -f "$temp_req"
-        return 1
-    fi
-}
-
 # 安装mofox-core
 install_mofox() {
     print_header "安装 MoFox-Core"
     
     local start_time=$(date +%s)
-    
-    # ============================================
-    # 新增：检查现有目录
-    # ============================================
-    
-    local mofox_dir="$HOME/MoFox_Bot_Deployment"
-    local mofox_core_dir="$mofox_dir/MoFox-Core"
-    
-    if [ -d "$mofox_core_dir" ] && [ "$SKIP_SYSTEM_CHECK" = false ]; then
-        print_message "$YELLOW" "检测到现有MoFox-Core目录，跳过克隆步骤"
-        cd "$mofox_core_dir" || return 1
-        
-        # 检查是否需要重新安装依赖
-        if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
-            print_message "$YELLOW" "虚拟环境不存在或损坏，需要重新安装依赖"
-        else
-            print_message "$GREEN" "虚拟环境已存在，跳过依赖安装"
-            # 直接进入配置步骤
-            if configure_existing_mofox; then
-                local end_time=$(date +%s)
-                local duration=$((end_time - start_time))
-                print_message "$GREEN" "✓ MoFox-Core配置完成 (用时: ${duration}秒)"
-                return 0
-            else
-                print_message "$RED" "✗ 现有MoFox-Core配置失败"
-                return 1
-            fi
-        fi
-    fi
     
     # 步骤1：安装系统依赖
     echo -n "安装系统依赖包... "
@@ -1127,7 +1003,7 @@ install_mofox() {
         return 1
     fi
     echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
-fi    # 步骤7：进入项目目录
+    # 步骤7：进入项目目录
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
     echo -e "${GREEN}✓${NC}"
