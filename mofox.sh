@@ -1220,21 +1220,164 @@ install_mofox() {
     # 清理临时日志文件
     rm -f "$first_run_log"
     
-    # 步骤20：配置Napcat插件
-    echo -n "配置Napcat插件... "
-    mkdir -p config/plugins/napcat_adapter
-    if [ -f "template/plugins/napcat_adapter/config.toml" ]; then
-        cp template/plugins/napcat_adapter/config.toml config/plugins/napcat_adapter/
-        sed -i 's/enabled = false/enabled = true/' config/plugins/napcat_adapter/config.toml 2>> "$INSTALL_LOG"
-        echo -e "${GREEN}✓${NC}"
-    elif [ -f "plugins/napcat_adapter/template_config.toml" ]; then
-        cp plugins/napcat_adapter/template_config.toml config/plugins/napcat_adapter/config.toml
-        echo -e "${GREEN}✓${NC}"
+# 步骤20：配置Napcat插件
+echo "配置Napcat插件..."
+
+# 定义可能的目录
+PLUGIN_DIR1="config/plugins/napcat_adapter_plugin"
+PLUGIN_DIR2="config/plugins/napcat_adapter"
+TEMPLATE_DIR1="template/plugins/napcat_adapter_plugin"
+TEMPLATE_DIR2="template/plugins/napcat_adapter"
+
+# 确保插件目录存在
+mkdir -p "$PLUGIN_DIR1" "$PLUGIN_DIR2" 2>/dev/null
+
+# 检查当前存在的配置文件
+config_found=false
+config_file=""
+
+# 检查哪些目录有配置文件
+if [ -f "$PLUGIN_DIR1/config.toml" ]; then
+    config_found=true
+    config_file="$PLUGIN_DIR1/config.toml"
+    echo -e "${GREEN}✓ 找到配置文件: $config_file${NC}"
+elif [ -f "$PLUGIN_DIR2/config.toml" ]; then
+    config_found=true
+    config_file="$PLUGIN_DIR2/config.toml"
+    echo -e "${GREEN}✓ 找到配置文件: $config_file${NC}"
+fi
+
+# 如果配置文件不存在，从模板复制
+if [ "$config_found" = false ]; then
+    # 检查模板源
+    if [ -f "$TEMPLATE_DIR1/config.toml" ]; then
+        # 复制到两个目标目录
+        echo -e "${CYAN}从模板复制到两个插件目录...${NC}"
+        cp "$TEMPLATE_DIR1/config.toml" "$PLUGIN_DIR1/config.toml" 2>> "$INSTALL_LOG"
+        cp "$TEMPLATE_DIR1/config.toml" "$PLUGIN_DIR2/config.toml" 2>> "$INSTALL_LOG"
+        config_file="$PLUGIN_DIR1/config.toml"
+        echo -e "${GREEN}✓ 模板复制完成${NC}"
+    elif [ -f "$TEMPLATE_DIR2/config.toml" ]; then
+        # 复制到两个目标目录
+        echo -e "${CYAN}从模板复制到两个插件目录...${NC}"
+        cp "$TEMPLATE_DIR2/config.toml" "$PLUGIN_DIR1/config.toml" 2>> "$INSTALL_LOG"
+        cp "$TEMPLATE_DIR2/config.toml" "$PLUGIN_DIR2/config.toml" 2>> "$INSTALL_LOG"
+        config_file="$PLUGIN_DIR1/config.toml"
+        echo -e "${GREEN}✓ 模板复制完成${NC}"
     else
-        echo -e "${YELLOW}⚠${NC}"
-        echo -e "${YELLOW}未找到Napcat插件模板，跳过配置${NC}"
+        echo -e "${YELLOW}⚠ 未找到插件模板文件${NC}"
     fi
+else
+    # 如果已有配置文件，复制到另一个目录（如果不存在）
+    if [ "$config_file" = "$PLUGIN_DIR1/config.toml" ] && [ ! -f "$PLUGIN_DIR2/config.toml" ]; then
+        echo -e "${CYAN}复制到另一个插件目录...${NC}"
+        cp "$config_file" "$PLUGIN_DIR2/config.toml" 2>> "$INSTALL_LOG"
+        echo -e "${GREEN}✓ 配置文件复制完成${NC}"
+    elif [ "$config_file" = "$PLUGIN_DIR2/config.toml" ] && [ ! -f "$PLUGIN_DIR1/config.toml" ]; then
+        echo -e "${CYAN}复制到另一个插件目录...${NC}"
+        cp "$config_file" "$PLUGIN_DIR1/config.toml" 2>> "$INSTALL_LOG"
+        echo -e "${GREEN}✓ 配置文件复制完成${NC}"
+    fi
+fi
+
+# 配置现有的配置文件（如果存在）
+configure_plugin_config() {
+    local config_file="$1"
     
+    if [ -f "$config_file" ]; then
+        echo -e "${CYAN}配置 $config_file ...${NC}"
+        
+        # 启用插件
+        sed -i 's/^enabled\s*=\s*false/enabled = true/' "$config_file" 2>> "$INSTALL_LOG"
+        
+        # 检查端口配置
+        if grep -q '^\s*port\s*=' "$config_file"; then
+            # 获取当前端口
+            current_port=$(grep '^\s*port\s*=' "$config_file" | head -1 | sed 's/.*=\s*//;s/\s*#.*//' | tr -d ' ' | tr -d '"' | tr -d "'")
+            
+            if [ -n "$current_port" ] && [ "$current_port" != "8095" ]; then
+                echo -e "${YELLOW}  检测到端口为 $current_port，改为8095${NC}"
+                sed -i "s/^port\s*=.*/port = 8095/" "$config_file" 2>> "$INSTALL_LOG"
+                echo -e "${GREEN}  端口已配置为8095${NC}"
+            else
+                echo -e "${GREEN}  端口已经是8095${NC}"
+            fi
+        else
+            # 添加端口配置
+            echo -e "${YELLOW}  未找到端口配置，添加端口8095${NC}"
+            echo -e "\n# Napcat WebSocket 服务端口\nport = 8095" >> "$config_file"
+        fi
+        
+        echo -e "${GREEN}  $config_file 配置完成${NC}"
+        return 0
+    fi
+    return 1
+}
+
+# 配置两个目录的配置文件
+config_configured=false
+
+echo ""
+echo -e "${CYAN}开始配置插件文件...${NC}"
+
+# 配置第一个目录
+if [ -f "$PLUGIN_DIR1/config.toml" ]; then
+    configure_plugin_config "$PLUGIN_DIR1/config.toml"
+    config_configured=true
+fi
+
+# 配置第二个目录
+if [ -f "$PLUGIN_DIR2/config.toml" ]; then
+    configure_plugin_config "$PLUGIN_DIR2/config.toml"
+    config_configured=true
+fi
+
+# 如果没有任何配置文件，创建默认配置
+if [ "$config_configured" = false ]; then
+    echo -e "${YELLOW}⚠ 未找到或创建任何配置文件，创建默认配置...${NC}"
+    
+    # 创建默认配置到两个目录
+    cat > "$PLUGIN_DIR1/config.toml" << EOF
+# Napcat WebSocket 适配器配置
+enabled = true
+
+# Napcat WebSocket 服务端口
+port = 8095
+
+# WebSocket 连接超时时间（秒）
+timeout = 30
+
+# 重连间隔（秒）
+reconnect_interval = 5
+
+# 心跳间隔（秒）
+heartbeat_interval = 30
+EOF
+    
+    cp "$PLUGIN_DIR1/config.toml" "$PLUGIN_DIR2/config.toml" 2>/dev/null
+    
+    echo -e "${GREEN}✓ 默认配置创建完成${NC}"
+fi
+
+echo ""
+echo -e "${GREEN}✓ Napcat插件配置完成${NC}"
+
+# 显示配置摘要
+echo ""
+echo -e "${CYAN}Napcat插件配置摘要：${NC}"
+if [ -f "$PLUGIN_DIR1/config.toml" ]; then
+    echo -e "${YELLOW}  $PLUGIN_DIR1/config.toml${NC}"
+    echo -e "${YELLOW}    启用状态：$(grep '^enabled =' "$PLUGIN_DIR1/config.toml" 2>/dev/null || echo "未找到")${NC}"
+    echo -e "${YELLOW}    端口配置：$(grep '^port =' "$PLUGIN_DIR1/config.toml" 2>/dev/null || echo "未找到")${NC}"
+fi
+
+if [ -f "$PLUGIN_DIR2/config.toml" ]; then
+    echo -e "${YELLOW}  $PLUGIN_DIR2/config.toml${NC}"
+    echo -e "${YELLOW}    启用状态：$(grep '^enabled =' "$PLUGIN_DIR2/config.toml" 2>/dev/null || echo "未找到")${NC}"
+    echo -e "${YELLOW}    端口配置：$(grep '^port =' "$PLUGIN_DIR2/config.toml" 2>/dev/null || echo "未找到")${NC}"
+fi
+
+echo ""
     # 步骤21：配置端口
     echo ""
     read -p "请输入Napcat服务器端口 (默认: 8080): " port
