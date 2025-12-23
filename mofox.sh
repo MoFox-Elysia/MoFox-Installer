@@ -220,7 +220,7 @@ check_mofox_directory() {
                 2)
                     print_message "$GREEN" "您选择了跳过系统检查"
                     SKIP_SYSTEM_CHECK=true
-                    return 2
+                    return 3
                     ;;
                 3)
                     print_message "$GREEN" "您选择了正常完整安装"
@@ -405,65 +405,6 @@ quick_install_mode() {
         fi
     fi
     
-    return 0
-}
-# ============================================
-# 新增：配置现有MoFox的函数
-# ============================================
-
-configure_existing_mofox() {
-    print_message "$GREEN" "配置现有MoFox-Core安装..."
-    
-    cd ~/MoFox_Bot_Deployment/MoFox-Core || return 1
-    
-    # 检查虚拟环境
-    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
-        print_message "$RED" "虚拟环境不存在或损坏，需要重新安装"
-        return 1
-    fi
-    
-    # 验证虚拟环境
-    echo -n "验证虚拟环境... "
-    if .venv/bin/python -c "import sys; print('Python', sys.version)" >> "$INSTALL_LOG" 2>&1; then
-        echo -e "${GREEN}✓${NC}"
-    else
-        echo -e "${RED}✗${NC}"
-        print_message "$RED" "虚拟环境验证失败"
-        return 1
-    fi
-    
-    # 检查配置文件
-    if [ ! -f ".env" ]; then
-        print_message "$YELLOW" "环境文件不存在，创建默认配置"
-        cp template/template.env .env 2>> "$INSTALL_LOG" || echo -e "${YELLOW}⚠ 环境文件创建失败${NC}"
-        sed -i 's/^EULA_CONFIRMED=.*/EULA_CONFIRMED=true/' .env
-    fi
-    
-    # 检查插件配置
-    if [ ! -d "config/plugins/napcat_adapter" ]; then
-        echo -n "配置Napcat插件... "
-        mkdir -p config/plugins/napcat_adapter
-        if [ -f "template/plugins/napcat_adapter/config.toml" ]; then
-            cp template/plugins/napcat_adapter/config.toml config/plugins/napcat_adapter/
-            sed -i 's/enabled = false/enabled = true/' config/plugins/napcat_adapter/config.toml 2>> "$INSTALL_LOG"
-            echo -e "${GREEN}✓${NC}"
-        fi
-    fi
-    
-    # 配置端口
-    echo ""
-    read -p "请输入Napcat连接端口 (默认: 8080): " port
-    port=${port:-8080}
-    
-    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
-        local plugin_config="config/plugins/napcat_adapter/config.toml"
-        if [ -f "$plugin_config" ]; then
-            sed -i "s/port = .*/port = $port/" "$plugin_config" 2>> "$INSTALL_LOG"
-            echo -e "${GREEN}✓ 端口配置成功: $port${NC}"
-        fi
-    fi
-    
-    print_message "$GREEN" "✓ 现有MoFox-Core配置完成"
     return 0
 }
 
@@ -1018,153 +959,32 @@ install_mofox() {
         return 1
     fi
     
-# 步骤8.5：为llvmlite创建独立的Python 3.9环境
-setup_python39_for_llvmlite() {
-    echo "为llvmlite创建独立的Python 3.9环境..."
+    # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
+    echo "安装Python依赖..."
     
-    # 检查是否已安装Python 3.9
-    if ! command -v python3.9 &> /dev/null; then
-        echo "未找到Python 3.9，开始安装..."
+    # 移除openai-whisper依赖
+    echo -n "移除openai-whisper依赖... "
+    sed -i '/^openai-whisper$/d' requirements.txt
+    echo -e "${GREEN}✓${NC}"
+    
+    # 方法1：使用uv指定Python路径（重试3次）
+    echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
+    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+        echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
+    else
+        echo -e "\r${RED}  ✗ 方法1失败${NC}"
         
-        # 根据不同系统安装Python 3.9
-        if [ -f /etc/debian_version ] || [ -f /etc/debian_release ]; then
-            # Debian/Ubuntu
-            apt-get update
-            apt-get install -y python3.9 python3.9-venv python3.9-dev
-        elif [ -f /etc/redhat-release ] || [ -f /etc/centos-release ]; then
-            # RHEL/CentOS
-            yum install -y python39 python39-devel
-        elif [ -f /etc/arch-release ]; then
-            # Arch Linux
-            pacman -S python39 --noconfirm
-        elif [ -f /etc/alpine-release ]; then
-            # Alpine Linux
-            apk add python39 py3-pip
+        # 方法2：先激活虚拟环境再使用uv（重试3次）
+        echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
+        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+            echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
         else
-            echo "无法自动安装Python 3.9，请手动安装"
-            echo "可以尝试: https://www.python.org/downloads/"
+            echo -e "\r${RED}  ✗ 方法2失败${NC}"
+            print_message "$RED" "依赖安装完全失败"
             return 1
         fi
     fi
-    
-    # 创建独立的Python 3.9虚拟环境
-    echo "创建独立的Python 3.9虚拟环境..."
-    python3.9 -m venv .venv-llvmlite
-    
-    # 激活环境并安装llvmlite
-    echo "在Python 3.9环境中安装llvmlite..."
-    if source .venv-llvmlite/bin/activate && \
-       .venv-llvmlite/bin/pip install llvmlite==0.36.0; then
-        echo "✅ Python 3.9环境中llvmlite安装成功"
-        deactivate
-        return 0
-    else
-        echo "❌ Python 3.9环境中llvmlite安装失败"
-        deactivate
-        return 1
-    fi
-}
 
-# 步骤9：在虚拟环境中安装Python依赖（带重试机制）
-echo "安装Python依赖..."
-
-# 检查是否需要使用独立的Python 3.9环境
-check_python_version_for_llvmlite() {
-    local python_version
-    python_version=$(python --version 2>&1 | awk '{print $2}')
-    
-    # 检查是否是Python 3.12或更高版本（llvmlite 0.36.0不支持）
-    local major
-    local minor
-    major=$(echo "$python_version" | cut -d. -f1)
-    minor=$(echo "$python_version" | cut -d. -f2)
-    
-    if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
-        echo "检测到Python $python_version，llvmlite 0.36.0需要Python 3.9"
-        return 0  # 需要独立环境
-    else
-        echo "Python $python_version 兼容llvmlite 0.36.0"
-        return 1  # 不需要独立环境
-    fi
-}
-
-# 如果Python版本>=3.12，设置独立环境
-if check_python_version_for_llvmlite; then
-    echo "当前Python版本不兼容llvmlite 0.36.0"
-    
-    # 询问用户是否要使用独立环境
-    read -p "是否要为llvmlite创建独立的Python 3.9环境？(y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # 方案1：使用独立的Python 3.9环境
-        setup_python39_for_llvmlite
-        
-        # 修改requirements.txt，排除llvmlite
-        echo "修改requirements.txt，排除llvmlite..."
-        if [ -f requirements.txt ]; then
-            # 备份原文件
-            cp requirements.txt requirements.txt.backup
-            
-            # 创建不包含llvmlite的requirements
-            grep -v llvmlite requirements.txt > requirements_no_llvmlite.txt
-            
-            # 安装其他依赖
-            echo "安装其他Python依赖..."
-        fi
-    else
-        # 方案2：尝试安装兼容版本
-        echo "尝试安装兼容的llvmlite版本..."
-        if ! .venv/bin/pip install llvmlite==0.41.1 2>/dev/null; then
-            echo "尝试从源码安装llvmlite..."
-            .venv/bin/pip install --no-binary llvmlite llvmlite
-        fi
-    fi
-fi
-
-# 方法1：使用uv指定Python路径（重试3次）
-echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
-
-# 如果有修改后的requirements文件，使用它
-if [ -f requirements_no_llvmlite.txt ]; then
-    REQUIREMENTS_FILE="requirements_no_llvmlite.txt"
-else
-    REQUIREMENTS_FILE="requirements.txt"
-fi
-
-if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r $REQUIREMENTS_FILE" "方法1: uv安装依赖"; then
-    echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
-    
-    # 如果使用了独立的llvmlite环境，添加环境变量
-    if [ -d ".venv-llvmlite" ]; then
-        echo "设置LLVM环境变量..."
-        export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config
-    fi
-else
-    echo -e "\r${RED}  ✗ 方法1失败${NC}"
-    
-    # 方法2：先激活虚拟环境再使用uv（重试3次）
-    echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
-    if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r $REQUIREMENTS_FILE" "方法2: 激活环境后uv安装"; then
-        echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
-        
-        # 如果使用了独立的llvmlite环境，添加环境变量
-        if [ -d ".venv-llvmlite" ]; then
-            echo "设置LLVM环境变量..."
-            export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config
-            # 写入激活脚本，使环境变量永久生效
-            echo "export LLVM_CONFIG=$(pwd)/.venv-llvmlite/bin/llvm-config" >> .venv/bin/activate
-        fi
-    else
-        echo -e "\r${RED}  ✗ 方法2失败${NC}"
-        print_message "$RED" "依赖安装完全失败"
-        return 1
-    fi
-fi
-
-# 清理临时文件
-if [ -f requirements_no_llvmlite.txt ]; then
-    rm -f requirements_no_llvmlite.txt
-fi
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
     cp template/template.env .env 2>> "$INSTALL_LOG"
@@ -1197,13 +1017,22 @@ fi
     
     # 步骤14：配置QQ账号
     echo ""
-    read -p "请输入机器人的QQ号 (9-11位数字): " qq_number
+    echo -e "${CYAN}现在开始配置MoFox-Core的QQ账号${NC}"
+    echo -e "${YELLOW}注意：QQ号应为纯数字，5-15位${NC}"
+    read -p "请输入机器人的QQ号: " qq_number
     
-    if [[ "$qq_number" =~ ^[0-9]{9,11}$ ]]; then
+    # 更宽松的QQ号验证 - 只检查是否为纯数字且不为空
+    if [[ -n "$qq_number" && "$qq_number" =~ ^[0-9]+$ ]]; then
         local config_file="config/bot_config.toml"
         if [ -f "$config_file" ]; then
-            sed -i "s/^\s*qq_account\s*=.*/qq_account = $qq_number/" "$config_file" 2>> "$INSTALL_LOG"
-            sed -i "s/^\s*platform\s*=.*/platform = \"qq\"/" "$config_file" 2>> "$INSTALL_LOG"
+            # 检查文件中是否已有qq_account配置
+            if grep -q "qq_account\s*=" "$config_file"; then
+                # 如果有，替换它
+                sed -i "s/qq_account\s*=.*/qq_account = $qq_number/" "$config_file" 2>> "$INSTALL_LOG"
+            else
+                # 如果没有，在[bot]部分后添加
+                sed -i "/^\[bot\]/a qq_account = $qq_number" "$config_file" 2>> "$INSTALL_LOG"
+            fi
             echo -e "${GREEN}✓ 机器人QQ号配置成功: $qq_number${NC}"
         else
             echo -e "${YELLOW}⚠ 配置文件不存在，跳过QQ配置${NC}"
@@ -1214,21 +1043,30 @@ fi
     
     # 步骤15：配置主人QQ
     echo ""
-    read -p "请输入主人QQ号 (9-11位数字): " master_qq
+    read -p "请输入主人QQ号: " master_qq
     
-    if [[ "$master_qq" =~ ^[0-9]{9,11}$ ]]; then
+    if [[ -n "$master_qq" && "$master_qq" =~ ^[0-9]+$ ]]; then
         local config_file="config/bot_config.toml"
         
-        # 直接替换注释掉的示例配置
-        sed -i "s/^master_users = \[\]# \[.*\]/master_users = [[\"qq\", \"$master_qq\"]]/" "$config_file" 2>> "$INSTALL_LOG"
-        
-        # 如果上面的替换没匹配到（可能是空数组）
-        sed -i "s/^master_users = \[\]/master_users = [[\"qq\", \"$master_qq\"]]/" "$config_file" 2>> "$INSTALL_LOG"
-        
-        echo -e "${GREEN}✓ 主人QQ号配置成功: $master_qq${NC}"
+        if [ -f "$config_file" ]; then
+            # 检查是否已经有master_users配置
+            if grep -q "master_users\s*=" "$config_file"; then
+                # 如果有配置，替换它
+                sed -i "s/master_users\s*=.*/master_users = [[\"qq\", \"$master_qq\"]]/" "$config_file" 2>> "$INSTALL_LOG"
+            else
+                # 如果没有配置，在文件末尾添加
+                echo -e "\n# 主人账号配置" >> "$config_file"
+                echo "master_users = [[\"qq\", \"$master_qq\"]]" >> "$config_file"
+            fi
+            
+            echo -e "${GREEN}✓ 主人QQ号配置成功: $master_qq${NC}"
+        else
+            echo -e "${YELLOW}⚠ 配置文件不存在，跳过主人QQ配置${NC}"
+        fi
     else
         echo -e "${YELLOW}⚠ 主人QQ号格式错误，跳过配置${NC}"
     fi
+    
     
     # 步骤16：配置模型文件
     echo -n "配置模型文件... "
