@@ -1373,6 +1373,7 @@ fi
 print_header "系统检查"
 
 print_message "$BLUE" "正在进行系统检查..."
+check_system_resources_strict
 check_root
 check_architecture
 check_network
