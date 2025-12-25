@@ -210,7 +210,7 @@ check_mofox_directory() {
                         MOFOX_EXISTS=false
                         echo -e "${GREEN}✓${NC}"
                         print_message "$GREEN" "已删除现有目录，将继续正常安装流程"
-                        sleep 2
+                        sleep 3
                     else
                         print_message "$YELLOW" "取消删除，继续使用现有目录"
                         return 1
@@ -465,8 +465,8 @@ fi
     read -p "是否现在重启系统？(y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_message "$YELLOW" "系统将在5秒后重启..."
-        sleep 5
+        print_message "$YELLOW" "系统将在60秒后重启..."
+        sleep 60
         reboot
     fi
 
@@ -618,13 +618,12 @@ check_network() {
 update_system() {
     print_header "系统更新"
     
-    echo -n "更新软件包列表... "
+
     retry_command $MAX_RETRIES $RETRY_DELAY "apt-get update" "更新软件包列表" || return 1
     
-    echo -n "升级软件包... "
+
     silent_install "apt-get upgrade -y" "升级软件包" || return 1
-    
-    echo -n "清理系统... "
+
     silent_install "apt-get autoremove -y && apt-get clean" "清理系统" || return 1
     
     print_message "$GREEN" "✓ 系统更新完成"
@@ -635,7 +634,7 @@ update_system() {
 install_dependencies() {
     print_header "安装依赖包"
     
-    echo -n "安装基础依赖... "
+
     silent_install "apt-get install -y curl wget git sudo build-essential " "安装基础依赖" || return 1
     
     print_message "$GREEN" "✓ 依赖包安装完成"
@@ -771,14 +770,14 @@ install_napcatqq() {
     cd "$TEMP_DIR/napcatqq" || return 1
     echo -e "${GREEN}✓${NC}"
     
-    echo -n "下载安装脚本... "
+
     retry_command $MAX_RETRIES $RETRY_DELAY "curl -o napcat.sh https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh" "下载NapcatQQ安装脚本" || return 1
     
     echo -n "设置执行权限... "
     chmod +x napcat.sh
     echo -e "${GREEN}✓${NC}"
     
-    echo -n "执行安装... "
+
     silent_install "bash napcat.sh --docker n --cli n" "安装NapcatQQ" || return 1
     
     print_message "$GREEN" "✓ NapcatQQ安装完成"
@@ -847,11 +846,11 @@ install_mofox() {
     local start_time=$(date +%s)
     
     # 步骤1：安装系统依赖
-    echo -n "安装系统依赖包... "
+
     silent_install "apt update && apt install -y sudo git curl python3 python3-pip python3-venv build-essential screen" "安装系统依赖包" || return 1
     
     # 步骤2：安装uv
-    echo -n "安装UV包管理器... "
+
     silent_install "pip3 install uv --break-system-packages -i https://repo.huaweicloud.com/repository/pypi/simple" "安装UV包管理器" || return 1
     
     # 步骤3：配置环境变量
@@ -968,14 +967,14 @@ install_mofox() {
     echo -e "${GREEN}✓${NC}"
     
     # 方法1：使用uv指定Python路径（重试3次）
-    echo -n "  ↳ 尝试方法1 (使用uv指定python路径)... "
+
     if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
         echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
     else
         echo -e "\r${RED}  ✗ 方法1失败${NC}"
         
         # 方法2：先激活虚拟环境再使用uv（重试3次）
-        echo -n "  ↳ 尝试方法2 (激活环境后使用uv)... "
+
         if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
             echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
         else
@@ -1015,32 +1014,421 @@ install_mofox() {
         print_message "$YELLOW" "未找到机器人配置模板"
     fi
     
-    # 步骤14：配置QQ账号
-    echo ""
-    echo -e "${CYAN}现在开始配置MoFox-Core的QQ账号${NC}"
-    echo -e "${YELLOW}注意：QQ号应为纯数字，5-15位${NC}"
-    read -p "请输入机器人的QQ号: " qq_number
-    
-    # 更宽松的QQ号验证 - 只检查是否为纯数字且不为空
-    if [[ -n "$qq_number" && "$qq_number" =~ ^[0-9]+$ ]]; then
-        local config_file="config/bot_config.toml"
-        if [ -f "$config_file" ]; then
-            # 检查文件中是否已有qq_account配置
-            if grep -q "qq_account\s*=" "$config_file"; then
-                # 如果有，替换它
-                sed -i "s/qq_account\s*=.*/qq_account = $qq_number/" "$config_file" 2>> "$INSTALL_LOG"
-            else
-                # 如果没有，在[bot]部分后添加
-                sed -i "/^\[bot\]/a qq_account = $qq_number" "$config_file" 2>> "$INSTALL_LOG"
-            fi
-            echo -e "${GREEN}✓ 机器人QQ号配置成功: $qq_number${NC}"
-        else
-            echo -e "${YELLOW}⚠ 配置文件不存在，跳过QQ配置${NC}"
+    # 步骤14：配置QQ账号和机器人信息
+echo ""
+echo -e "${CYAN}现在开始配置MoFox-Core的QQ账号和机器人信息${NC}"
+
+# 1. 配置QQ账号（原有功能）
+echo -e "${YELLOW}注意：QQ号应为纯数字，5-15位${NC}"
+read -p "请输入机器人的QQ号: " qq_number
+
+# 2. 配置机器人昵称
+read -p "请输入机器人的昵称（显示名称）: " bot_nickname
+
+# 3. 配置机器人别名（多个）
+alias_array=()
+echo -e "${YELLOW}现在配置机器人别名（可设置多个，输入空值结束）${NC}"
+while true; do
+    read -p "请输入一个别名（直接按Enter结束）: " alias_name
+    if [[ -z "$alias_name" ]]; then
+        break
+    fi
+    alias_array+=("\"$alias_name\"")
+done
+
+# 验证并写入配置
+if [[ -n "$qq_number" && "$qq_number" =~ ^[0-9]+$ ]]; then
+    local config_file="config/bot_config.toml"
+    if [ -f "$config_file" ]; then
+        # 确保[bot]节存在
+        if ! grep -q "^\[bot\]" "$config_file"; then
+            echo "[bot]" >> "$config_file"
         fi
+        
+        # 配置QQ账号
+        if grep -q "qq_account\s*=" "$config_file"; then
+            sed -i "s/qq_account\s*=.*/qq_account = $qq_number/" "$config_file" 2>> "$INSTALL_LOG"
+        else
+            sed -i "/^\[bot\]/a qq_account = $qq_number" "$config_file" 2>> "$INSTALL_LOG"
+        fi
+        echo -e "${GREEN}✓ 机器人QQ号配置成功: $qq_number${NC}"
+        
+        # 配置昵称
+        if [[ -n "$bot_nickname" ]]; then
+            if grep -q "nickname\s*=" "$config_file"; then
+                sed -i "s/nickname\s*=.*/nickname = \"$bot_nickname\"/" "$config_file" 2>> "$INSTALL_LOG"
+            else
+                sed -i "/^\[bot\]/a nickname = \"$bot_nickname\"" "$config_file" 2>> "$INSTALL_LOG"
+            fi
+            echo -e "${GREEN}✓ 机器人昵称配置成功: $bot_nickname${NC}"
+        else
+            echo -e "${YELLOW}⚠ 昵称为空，跳过昵称配置${NC}"
+        fi
+        
+        # 配置别名数组
+        if [ ${#alias_array[@]} -gt 0 ]; then
+            # 构建TOML数组格式
+            alias_string="alias_names = ["
+            for ((i=0; i<${#alias_array[@]}; i++)); do
+                if [ $i -gt 0 ]; then
+                    alias_string+=", "
+                fi
+                alias_string+="${alias_array[$i]}"
+            done
+            alias_string+="]"
+            
+            if grep -q "alias_names\s*=" "$config_file"; then
+                # 注意：这里使用|作为分隔符，避免路径中的/冲突
+                sed -i "s|alias_names\s*=.*|$alias_string|" "$config_file" 2>> "$INSTALL_LOG"
+            else
+                sed -i "/^\[bot\]/a $alias_string" "$config_file" 2>> "$INSTALL_LOG"
+            fi
+            echo -e "${GREEN}✓ 机器人别名配置成功${NC}"
+        else
+            echo -e "${YELLOW}⚠ 未设置别名，跳过别名配置${NC}"
+        fi
+        
+        # 确保platform配置（根据示例）
+        if ! grep -q "platform\s*=" "$config_file"; then
+            sed -i "/^\[bot\]/a platform = \"qq\"" "$config_file" 2>> "$INSTALL_LOG"
+        fi
+        
     else
-        echo -e "${YELLOW}⚠ QQ号格式错误，跳过配置${NC}"
+        echo -e "${YELLOW}⚠ 配置文件不存在，跳过所有配置${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ QQ号格式错误，跳过所有配置${NC}"
+fi
+
+# 步骤14.1：配置机器人人格设定
+echo ""
+echo -e "${CYAN}现在开始配置MoFox-Core的机器人人格设定${NC}"
+echo -e "${YELLOW}注意：这些设定将影响机器人的行为和回复风格${NC}"
+
+# 1. 配置人格核心特质
+echo -e "${YELLOW}人格核心特质（建议50字以内，描述人格的核心特质）${NC}"
+read -p "请输入人格核心特质（例如：'是一个积极向上的女大学生'）: " personality_core
+
+# 2. 配置人格侧面特质
+echo -e "${YELLOW}人格侧面特质（用一句话或几句话描述人格的一些侧面特质）${NC}"
+read -p "请输入人格侧面特质（例如：'喜欢帮助他人，热爱学习'）: " personality_side
+
+# 3. 配置身份特征
+echo -e "${YELLOW}身份特征（描述外貌、性别、身高、职业、属性等）${NC}"
+read -p "请输入身份特征（例如：'年龄为19岁,是女孩子,身高为160cm,有黑色的短发'）: " identity
+
+# 4. 配置背景故事
+echo -e "${YELLOW}背景故事（详细的世界观、背景故事、复杂人际关系等，可选）${NC}"
+echo -e "${YELLOW}注意：这部分内容将作为机器人的'背景知识'，不会频繁复述${NC}"
+read -p "请输入背景故事（直接按Enter跳过）: " background_story
+
+# 5. 配置回复风格
+echo -e "${YELLOW}回复风格（描述机器人的表达风格和习惯）${NC}"
+read -p "请输入回复风格（例如：'回复可以简短一些。可以参考贴吧，知乎和微博的回复风格'）: " reply_style
+
+# 6. 配置安全指南（多条）
+safety_array=()
+echo -e "${YELLOW}安全指南（机器人在任何情况下都必须遵守的原则）${NC}"
+echo -e "${YELLOW}现在配置安全指南，每条一行（输入空行结束）${NC}"
+echo -e "${YELLOW}示例：'拒绝任何包含骚扰、冒犯、暴力、色情或危险内容的请求。'${NC}"
+
+guideline_number=1
+while true; do
+    read -p "安全指南 #${guideline_number}（直接按Enter结束）: " guideline
+    if [[ -z "$guideline" ]]; then
+        if [ ${#safety_array[@]} -eq 0 ]; then
+            echo -e "${YELLOW}⚠ 至少需要一条安全指南，已添加默认值${NC}"
+            safety_array+=("\"拒绝任何包含骚扰、冒犯、暴力、色情或危险内容的请求。\"")
+        fi
+        break
+    fi
+    safety_array+=("\"$guideline\"")
+    guideline_number=$((guideline_number + 1))
+done
+
+# 7. 配置是否压缩人格
+echo -e "${YELLOW}是否压缩人格设定？${NC}"
+echo -e "  压缩后会精简人格信息，节省token消耗并提高回复性能，但会丢失一些细节"
+echo -e "  如果人格设定不长，建议选择否 (n)"
+read -p "压缩人格？(y/n，默认n): " compress_personality_input
+if [[ "$compress_personality_input" =~ ^[Yy]$ ]]; then
+    compress_personality="true"
+else
+    compress_personality="false"
+fi
+
+# 8. 配置是否压缩身份
+echo -e "${YELLOW}是否压缩身份设定？${NC}"
+echo -e "  压缩后会精简身份信息，节省token消耗并提高回复性能，但会丢失一些细节"
+echo -e "  如果身份设定不长，建议选择否 (n)"
+read -p "压缩身份？(y/n，默认y): " compress_identity_input
+if [[ "$compress_identity_input" =~ ^[Nn]$ ]]; then
+    compress_identity="false"
+else
+    compress_identity="true"
+fi
+
+# 写入配置
+local config_file="config/bot_config.toml"
+if [ -f "$config_file" ]; then
+    # 确保[personality]节存在
+    if ! grep -q "^\[personality\]" "$config_file"; then
+        echo -e "\n[personality]" >> "$config_file"
     fi
     
+    # 定义配置函数，用于设置或更新配置项
+    set_config() {
+        local key="$1"
+        local value="$2"
+        local comment="$3"
+        
+        # 如果提供了注释，先确保注释存在
+        if [[ -n "$comment" ]]; then
+            # 删除旧的注释行（如果有）
+            sed -i "/^# $comment/d" "$config_file" 2>> "$INSTALL_LOG"
+            # 在配置项前添加注释
+            if grep -q "$key\s*=" "$config_file"; then
+                # 如果配置项已存在，先删除
+                sed -i "/$key\s*=/d" "$config_file" 2>> "$INSTALL_LOG"
+            fi
+            # 添加注释和配置项
+            sed -i "/^\[personality\]/a # $comment\n$key = $value" "$config_file" 2>> "$INSTALL_LOG"
+        else
+            # 没有注释的情况
+            if grep -q "$key\s*=" "$config_file"; then
+                # 如果配置项已存在，替换它
+                sed -i "s|$key\s*=.*|$key = $value|" "$config_file" 2>> "$INSTALL_LOG"
+            else
+                # 如果配置项不存在，在[personality]后添加
+                sed -i "/^\[personality\]/a $key = $value" "$config_file" 2>> "$INSTALL_LOG"
+            fi
+        fi
+    }
+    
+    # 配置人格核心特质
+    if [[ -n "$personality_core" ]]; then
+        set_config "personality_core" "\"$personality_core\"" "建议50字以内，描述人格的核心特质"
+        echo -e "${GREEN}✓ 人格核心特质配置成功${NC}"
+    else
+        echo -e "${YELLOW}⚠ 人格核心特质为空，跳过配置${NC}"
+    fi
+    
+    # 配置人格侧面特质
+    if [[ -n "$personality_side" ]]; then
+        set_config "personality_side" "\"$personality_side\"" "人格的细节，描述人格的一些侧面"
+        echo -e "${GREEN}✓ 人格侧面特质配置成功${NC}"
+    else
+        echo -e "${YELLOW}⚠ 人格侧面特质为空，跳过配置${NC}"
+    fi
+    
+    # 配置身份特征
+    if [[ -n "$identity" ]]; then
+        set_config "identity" "\"$identity\"" "可以描述外貌，性别，身高，职业，属性等等描述"
+        echo -e "${GREEN}✓ 身份特征配置成功${NC}"
+    else
+        echo -e "${YELLOW}⚠ 身份特征为空，跳过配置${NC}"
+    fi
+    
+    # 配置背景故事
+    if [[ -n "$background_story" ]]; then
+        set_config "background_story" "\"$background_story\"" "此处用于填写详细的世界观、背景故事、复杂人际关系等"
+        echo -e "${GREEN}✓ 背景故事配置成功${NC}"
+    else
+        # 如果背景故事为空，确保它存在但为空字符串
+        if ! grep -q "background_story\s*=" "$config_file"; then
+            sed -i "/^\[personality\]/a background_story = \"\"" "$config_file" 2>> "$INSTALL_LOG"
+        fi
+        echo -e "${YELLOW}⚠ 背景故事为空，已设置为空字符串${NC}"
+    fi
+    
+    # 配置回复风格
+    if [[ -n "$reply_style" ]]; then
+        set_config "reply_style" "\"$reply_style\"" "描述MoFox-Bot说话的表达风格，表达习惯"
+        echo -e "${GREEN}✓ 回复风格配置成功${NC}"
+    else
+        echo -e "${YELLOW}⚠ 回复风格为空，跳过配置${NC}"
+    fi
+    
+    # 配置安全指南数组
+    if [ ${#safety_array[@]} -gt 0 ]; then
+        # 构建TOML数组格式
+        safety_string="safety_guidelines = ["
+        for ((i=0; i<${#safety_array[@]}; i++)); do
+            if [ $i -gt 0 ]; then
+                safety_string+=", "
+            fi
+            safety_string+="${safety_array[$i]}"
+        done
+        safety_string+="]"
+        
+        set_config "safety_guidelines" "$safety_string" "互动规则 (Bot在任何情况下都必须遵守的原则)"
+        echo -e "${GREEN}✓ 安全指南配置成功（共${#safety_array[@]}条）${NC}"
+    else
+        echo -e "${YELLOW}⚠ 安全指南为空，跳过配置${NC}"
+    fi
+    
+    # 配置是否压缩人格
+    set_config "compress_personality" "$compress_personality" "是否压缩人格，压缩后会精简人格信息，节省token消耗并提高回复性能"
+    echo -e "${GREEN}✓ 人格压缩配置: $compress_personality${NC}"
+    
+    # 配置是否压缩身份
+    set_config "compress_identity" "$compress_identity" "是否压缩身份，压缩后会精简身份信息，节省token消耗并提高回复性能"
+    echo -e "${GREEN}✓ 身份压缩配置: $compress_identity${NC}"
+    
+    echo -e "${GREEN}✓ 机器人人格设定配置完成${NC}"
+    
+else
+    echo -e "${YELLOW}⚠ 配置文件不存在，跳过人格设定配置${NC}"
+fi
+
+# 步骤14.2：配置聊天功能开关
+echo ""
+echo -e "${CYAN}现在开始配置MoFox-Core的聊天功能开关${NC}"
+echo -e "${YELLOW}以下配置将影响机器人的聊天行为和功能${NC}"
+
+# 1. 询问是否允许回复自己说的话
+echo -e "${YELLOW}是否允许回复自己说的话？${NC}"
+echo -e "  如果开启，机器人可能会回复自己发送的消息"
+echo -e "  默认值：否 (n)"
+read -p "允许回复自己？(y/n，默认n): " allow_reply_self_input
+if [[ "$allow_reply_self_input" =~ ^[Yy]$ ]]; then
+    allow_reply_self="true"
+else
+    allow_reply_self="false"
+fi
+
+# 2. 询问是否私聊必然回复
+echo -e "${YELLOW}是否开启私聊必然回复？${NC}"
+echo -e "  如果开启，机器人在私聊中会必然回复每条消息"
+echo -e "  默认值：否 (n)"
+read -p "私聊必然回复？(y/n，默认n): " private_chat_input
+if [[ "$private_chat_input" =~ ^[Yy]$ ]]; then
+    private_chat_inevitable_reply="true"
+else
+    private_chat_inevitable_reply="false"
+fi
+
+# 3. 询问是否启用消息缓存系统
+echo -e "${YELLOW}是否启用消息缓存系统？${NC}"
+echo -e "  启用后，处理中收到的消息会被缓存，处理完成后统一刷新到未读列表"
+echo -e "  可以提高消息处理效率，但可能增加内存使用"
+echo -e "  默认值：否 (n)"
+read -p "启用消息缓存？(y/n，默认n): " cache_input
+if [[ "$cache_input" =~ ^[Yy]$ ]]; then
+    enable_message_cache="true"
+else
+    enable_message_cache="false"
+fi
+
+# 4. 询问是否启用消息打断系统
+echo -e "${YELLOW}是否启用消息打断系统？${NC}"
+echo -e "  启用后，机器人可以根据消息重要性打断当前处理流程"
+echo -e "  默认值：否 (n)"
+read -p "启用消息打断？(y/n，默认n): " interruption_input
+if [[ "$interruption_input" =~ ^[Yy]$ ]]; then
+    interruption_enabled="true"
+    
+    # 如果启用了消息打断系统，询问是否允许在生成回复时打断
+    echo -e "${YELLOW}是否允许在正在生成回复时打断？${NC}"
+    echo -e "  如果开启，可以在机器人正在生成回复时打断当前回复"
+    echo -e "  默认值：否 (n)"
+    read -p "允许打断回复？(y/n，默认n): " reply_interruption_input
+    if [[ "$reply_interruption_input" =~ ^[Yy]$ ]]; then
+        allow_reply_interruption="true"
+    else
+        allow_reply_interruption="false"
+    fi
+else
+    interruption_enabled="false"
+    allow_reply_interruption="false"
+fi
+
+# 5. 询问是否允许回复表情包消息
+echo -e "${YELLOW}是否允许回复表情包消息？${NC}"
+echo -e "  如果开启，机器人可能会对纯表情包消息进行回复"
+echo -e "  默认值：否 (n)"
+read -p "允许回复表情包？(y/n，默认n): " emoji_input
+if [[ "$emoji_input" =~ ^[Yy]$ ]]; then
+    allow_reply_to_emoji="true"
+else
+    allow_reply_to_emoji="false"
+fi
+
+# 写入配置
+local config_file="config/bot_config.toml"
+if [ -f "$config_file" ]; then
+    # 确保[chat]节存在
+    if ! grep -q "^\[chat\]" "$config_file"; then
+        echo -e "\n[chat] #MoFox-Bot的聊天通用设置" >> "$config_file"
+    fi
+    
+    # 更新或添加配置项的函数
+    update_config() {
+        local key="$1"
+        local value="$2"
+        local comment="$3"
+        
+        # 检查配置项是否存在
+        if grep -q "^$key\s*=" "$config_file"; then
+            # 存在则更新
+            sed -i "s/^$key\s*=.*/$key = $value/" "$config_file" 2>> "$INSTALL_LOG"
+        else
+            # 不存在则添加，放在[chat]节下面
+            sed -i "/^\[chat\]/a $key = $value" "$config_file" 2>> "$INSTALL_LOG"
+            
+            # 如果有注释，在配置项上方添加注释
+            if [[ -n "$comment" ]]; then
+                sed -i "/^$key = $value/i # $comment" "$config_file" 2>> "$INSTALL_LOG"
+            fi
+        fi
+    }
+    
+    # 更新或添加各个配置项
+    update_config "allow_reply_self" "$allow_reply_self" "是否允许回复自己说的话"
+    echo -e "${GREEN}✓ allow_reply_self: $allow_reply_self${NC}"
+    
+    update_config "private_chat_inevitable_reply" "$private_chat_inevitable_reply" "私聊必然回复"
+    echo -e "${GREEN}✓ private_chat_inevitable_reply: $private_chat_inevitable_reply${NC}"
+    
+    update_config "enable_message_cache" "$enable_message_cache" "是否启用消息缓存系统（启用后，处理中收到的消息会被缓存，处理完成后统一刷新到未读列表）"
+    echo -e "${GREEN}✓ enable_message_cache: $enable_message_cache${NC}"
+    
+    # 处理消息打断系统相关配置
+    update_config "interruption_enabled" "$interruption_enabled" "是否启用消息打断系统"
+    echo -e "${GREEN}✓ interruption_enabled: $interruption_enabled${NC}"
+    
+    if [[ "$interruption_enabled" == "true" ]]; then
+        update_config "allow_reply_interruption" "$allow_reply_interruption" "是否允许在正在生成回复时打断（true=允许打断回复，false=回复期间不允许打断）"
+        echo -e "${GREEN}✓ allow_reply_interruption: $allow_reply_interruption${NC}"
+    else
+        # 如果未启用消息打断系统，确保allow_reply_interruption为false
+        if grep -q "^allow_reply_interruption\s*=" "$config_file"; then
+            sed -i "s/^allow_reply_interruption\s*=.*/allow_reply_interruption = false/" "$config_file" 2>> "$INSTALL_LOG"
+        fi
+    fi
+    
+    update_config "allow_reply_to_emoji" "$allow_reply_to_emoji" "是否允许回复表情包消息"
+    echo -e "${GREEN}✓ allow_reply_to_emoji: $allow_reply_to_emoji${NC}"
+    
+    # 确保其他重要的配置项存在（如果不存在则使用默认值）
+    if ! grep -q "^max_context_size\s*=" "$config_file"; then
+        sed -i "/^\[chat\]/a max_context_size = 25 # 上下文长度" "$config_file" 2>> "$INSTALL_LOG"
+    fi
+    
+    if ! grep -q "^thinking_timeout\s*=" "$config_file"; then
+        sed -i "/^\[chat\]/a thinking_timeout = 60 # MoFox-Bot一次回复最长思考规划时间，超过这个时间的思考会放弃（往往是api反应太慢）" "$config_file" 2>> "$INSTALL_LOG"
+    fi
+    
+    if ! grep -q "^dynamic_distribution_enabled\s*=" "$config_file"; then
+        sed -i "/^\[chat\]/a dynamic_distribution_enabled = true # 是否启用动态消息分发周期调整" "$config_file" 2>> "$INSTALL_LOG"
+    fi
+    
+    echo -e "${GREEN}✓ 聊天功能开关配置完成${NC}"
+    
+else
+    echo -e "${YELLOW}⚠ 配置文件不存在，跳过聊天功能配置${NC}"
+fi
+
     # 步骤15：配置主人QQ
     echo ""
     read -p "请输入主人QQ号: " master_qq
@@ -1378,24 +1766,9 @@ if [ -f "$PLUGIN_DIR2/config.toml" ]; then
 fi
 
 echo ""
-    # 步骤21：配置端口
-    echo ""
-    read -p "请输入Napcat服务器端口 (默认: 8080): " port
-    port=${port:-8080}
+
     
-    if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
-        local plugin_config="config/plugins/napcat_adapter/config.toml"
-        if [ -f "$plugin_config" ]; then
-            sed -i "s/port = .*/port = $port/" "$plugin_config" 2>> "$INSTALL_LOG"
-            echo -e "${GREEN}✓ 端口配置成功: $port${NC}"
-        else
-            echo -e "${YELLOW}⚠ 插件配置文件不存在，端口配置失败${NC}"
-        fi
-    else
-        echo -e "${YELLOW}⚠ 端口号无效，使用默认端口: 8080${NC}"
-    fi
-    
-    # 步骤22：测试虚拟环境
+    # 步骤21：测试虚拟环境
     echo -n "测试虚拟环境... "
     if .venv/bin/python -c "import sys; print('Python', sys.version)" >> "$INSTALL_LOG" 2>&1; then
         echo -e "${GREEN}✓${NC}"
@@ -1605,8 +1978,8 @@ goto_installation_complete
 read -p "是否现在重启系统？(y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    print_message "$YELLOW" "系统将在5秒后重启..."
-    sleep 5
+    print_message "$YELLOW" "系统将在60秒后重启..."
+    sleep 60
     reboot
 fi
 
