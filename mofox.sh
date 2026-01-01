@@ -5,7 +5,7 @@
 # 适用于基于Debian 11的Armbian系统
 # 作者：牡丹江市第一高级中学ACG社2023级社长越渊
 # 创建日期：$(date +%Y-%m-%d)
-# 版本：2.7.5
+# 版本：2.7.6
 # ============================================
 
 # 脚本功能说明：
@@ -38,11 +38,12 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+
 # ============================================
 # 变量定义
 # ============================================
 SCRIPT_NAME="Armbian软件自动安装脚本"
-SCRIPT_VERSION="2.7.5"
+SCRIPT_VERSION="2.7.6"
 INSTALL_LOG="/var/log/armbian_install_$(date +%Y%m%d_%H%M%S).log"
 TEMP_DIR="/tmp/armbian_install"
 
@@ -56,6 +57,9 @@ INSTALL_COPLAR=false
 MOFOX_EXISTS=false
 NAPCAT_EXISTS=false
 SKIP_SYSTEM_CHECK=false
+
+# Napcat配置相关变量
+NAPCAT_CONFIG_DIR="/root/Napcat/opt/QQ/resources/app/app_launcher/napcat/config"
 # ============================================
 # 函数定义
 # ============================================
@@ -143,6 +147,475 @@ print_mofox_ascii() {
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
 
 }
+
+# ============================================
+# 新增：Napcat配置函数组
+# ============================================
+
+# 修改webui.json配置文件中的token
+configure_napcat_token() {
+    local config_file="$NAPCAT_CONFIG_DIR/webui.json"
+    
+    # 检查配置文件是否存在
+    if [ ! -f "$config_file" ]; then
+        echo -e "${YELLOW}⚠ 配置文件不存在: $config_file${NC}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}正在检查Napcat配置文件...${NC}"
+    
+    # 查找并提取当前token
+    local current_token=$(grep -o '"token": *"[^"]*"' "$config_file" | head -1 | sed 's/"token": *"\([^"]*\)"/\1/')
+    
+    if [ -z "$current_token" ]; then
+        echo -e "${YELLOW}⚠ 未找到token字段${NC}"
+        echo "当前文件内容:"
+        cat "$config_file"
+        echo ""
+        
+        read -p "是否要手动添加token字段？(y/N): " add_token
+        if [[ "$add_token" =~ ^[Yy]$ ]]; then
+            read -p "请输入新的token值: " new_token
+            # 这里需要根据实际JSON结构添加token字段
+            echo -e "${YELLOW}注意: 请根据JSON结构手动添加token字段${NC}"
+        fi
+        return 0
+    fi
+    
+    echo -e "${GREEN}当前token: $current_token${NC}"
+    echo ""
+    
+    # 询问用户是否修改token
+    read -p "是否要修改token？(y/N，直接回车跳过): " modify_choice
+    
+    if [[ "$modify_choice" =~ ^[Yy]$ ]]; then
+        read -p "请输入新的token值: " new_token
+        
+        if [ -n "$new_token" ]; then
+            # 备份原文件
+            local backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
+            cp "$config_file" "$backup_file"
+            echo -e "${GREEN}已创建备份: $backup_file${NC}"
+            
+            # 使用sed替换token值，确保保持JSON格式
+            sed -i "s/\"token\": *\"$current_token\"/\"token\": \"$new_token\"/g" "$config_file"
+            
+            # 验证替换是否成功
+            local updated_token=$(grep -o '"token": *"[^"]*"' "$config_file" | head -1 | sed 's/"token": *"\([^"]*\)"/\1/')
+            
+            if [ "$updated_token" = "$new_token" ]; then
+                echo -e "${GREEN}✓ token已成功修改为: $updated_token${NC}"
+            else
+                echo -e "${RED}✗ token修改失败，正在恢复备份...${NC}"
+                cp "$backup_file" "$config_file"
+                echo -e "${YELLOW}已恢复备份文件${NC}"
+                return 1
+            fi
+        else
+            echo -e "${YELLOW}未输入新的token值，保持原样${NC}"
+        fi
+    else
+        echo -e "${GREEN}保持当前token: $current_token${NC}"
+    fi
+    
+    return 0
+}
+
+# 在screen中运行napcatqq
+run_napcat_in_screen() {
+    local screen_name="napcat_qq"
+    local napcat_cmd="xvfb-run -a /root/Napcat/opt/QQ/qq --no-sandbox"
+    
+    echo ""
+    echo -e "${CYAN}正在启动Napcat QQ...${NC}"
+    echo -e "${YELLOW}命令行: $napcat_cmd${NC}"
+    
+    # 检查screen是否已安装
+    if ! command -v screen &> /dev/null; then
+        echo -e "${YELLOW}screen未安装，尝试安装...${NC}"
+        if command -v apt-get &> /dev/null; then
+            apt-get update && apt-get install -y screen
+        elif command -v yum &> /dev/null; then
+            yum install -y screen
+        elif command -v apt &> /dev/null; then
+            apt update && apt install -y screen
+        else
+            echo -e "${RED}无法确定包管理器，请手动安装screen${NC}"
+            return 1
+        fi
+    fi
+    
+    # 检查是否已经存在同名的screen会话
+    if screen -list | grep -q "$screen_name"; then
+        echo -e "${YELLOW}检测到已存在的screen会话: $screen_name，正在停止...${NC}"
+        screen -S "$screen_name" -X quit
+        sleep 2
+    fi
+    
+    # 创建并运行screen会话
+    echo -e "${CYAN}正在创建screen会话: $screen_name${NC}"
+    screen -dmS "$screen_name" bash -c "$napcat_cmd; echo 'Napcat QQ进程已退出，按回车键关闭此窗口...'; read"
+    
+    # 等待一下确保screen会话启动
+    sleep 3
+    
+    # 检查是否成功启动
+    if screen -list | grep -q "$screen_name"; then
+        echo -e "${GREEN}✓ screen会话 '$screen_name' 已成功启动${NC}"
+        echo -e "${YELLOW}提示: 使用 'screen -r $screen_name' 查看运行状态${NC}"
+    else
+        echo -e "${YELLOW}✗ screen会话启动失败，尝试直接运行...${NC}"
+        eval "$napcat_cmd &"
+        echo -e "${GREEN}Napcat QQ已在后台运行${NC}"
+    fi
+    
+    return 0
+}
+
+# 显示最新日志函数
+show_napcat_latest_log() {
+    local log_dir="/root/Napcat/opt/QQ/resources/app/app_launcher/napcat/logs"
+    
+    # 检查日志目录是否存在
+    if [ ! -d "$log_dir" ]; then
+        echo -e "${RED}错误: 日志目录不存在: $log_dir${NC}"
+        return 1
+    fi
+    
+    # 查找最新的log文件
+    local latest_log=$(find "$log_dir" -name "*.log" -type f | sort -r | head -1)
+    
+    if [ -z "$latest_log" ]; then
+        echo -e "${YELLOW}警告: 在 $log_dir 中未找到任何.log文件${NC}"
+        echo -e "${YELLOW}尝试查找其他日志文件...${NC}"
+        latest_log=$(find "$log_dir" -type f | grep -i log | sort -r | head -1)
+        
+        if [ -z "$latest_log" ]; then
+            echo -e "${YELLOW}未找到任何日志文件${NC}"
+            return 1
+        fi
+    fi
+    
+    echo -e "${GREEN}找到最新日志文件: $latest_log${NC}"
+    echo -e "${CYAN}显示最后23行日志:${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    tail -23 "$latest_log"
+    echo -e "${BLUE}========================================${NC}"
+    
+    return 0
+}
+
+# 检查登录状态并询问用户
+check_napcat_login_status() {
+    local max_attempts=10
+    local attempt=1
+    
+    echo ""
+    echo -e "${CYAN}等待Napcat QQ启动...${NC}"
+    sleep 5  # 等待程序启动
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo ""
+        echo -e "${YELLOW}检查日志 (尝试 $attempt/$max_attempts):${NC}"
+        
+        # 显示最新日志
+        if ! show_napcat_latest_log; then
+            echo -e "${YELLOW}无法读取日志，等待5秒后重试...${NC}"
+            sleep 5
+            attempt=$((attempt + 1))
+            continue
+        fi
+        
+        # 询问用户是否登录完成
+        echo ""
+        read -p "是否已登录完成？(Y/n，或输入 'r' 重新显示日志): " login_choice
+        
+        case $login_choice in
+            [Yy]|"")
+                echo -e "${GREEN}✓ 登录完成确认${NC}"
+                return 0
+                ;;
+            [Nn])
+                echo -e "${YELLOW}等待10秒后再次检查...${NC}"
+                sleep 10
+                attempt=$((attempt + 1))
+                ;;
+            [Rr])
+                echo -e "${CYAN}重新显示日志...${NC}"
+                # 继续循环，不增加尝试次数
+                continue
+                ;;
+            *)
+                echo -e "${YELLOW}请输入 Y/n/r，输入无效，等待10秒后继续...${NC}"
+                sleep 10
+                attempt=$((attempt + 1))
+                ;;
+        esac
+    done
+    
+    echo -e "${YELLOW}已达到最大检查次数 ($max_attempts 次)，跳过登录确认${NC}"
+    return 1
+}
+
+# 提取QQ号并更新autoLoginAccount
+update_napcat_auto_login_account() {
+    local webui_file="$NAPCAT_CONFIG_DIR/webui.json"
+    
+    echo ""
+    echo -e "${CYAN}正在查找Napcat生成的QQ配置文件...${NC}"
+    
+    # 查找napcat_*.json文件
+    local napcat_files=$(find "$NAPCAT_CONFIG_DIR" -maxdepth 1 -name "napcat_*.json" -type f)
+    
+    if [ -z "$napcat_files" ]; then
+        echo -e "${YELLOW}未找到napcat_*.json文件${NC}"
+        echo -e "${YELLOW}可能原因：${NC}"
+        echo -e "${YELLOW}  1. Napcat QQ尚未登录成功${NC}"
+        echo -e "${YELLOW}  2. 配置文件在其他位置${NC}"
+        echo -e "${YELLOW}  3. 文件名格式不符${NC}"
+        return 1
+    fi
+    
+    # 取最新的一个文件（按修改时间排序）
+    local latest_file=$(ls -t $NAPCAT_CONFIG_DIR/napcat_*.json 2>/dev/null | head -1)
+    
+    if [ -z "$latest_file" ] || [ ! -f "$latest_file" ]; then
+        echo -e "${YELLOW}无法找到最新的napcat配置文件${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}找到配置文件: $latest_file${NC}"
+    
+    # 从文件名中提取QQ号
+    # 文件名格式：napcat_2254836913.json
+    local qq_number=$(basename "$latest_file" | sed -n 's/napcat_\([0-9]*\)\.json/\1/p')
+    
+    if [ -z "$qq_number" ]; then
+        echo -e "${RED}无法从文件名中提取QQ号${NC}"
+        echo -e "${YELLOW}文件名: $(basename "$latest_file")${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}提取到QQ号: $qq_number${NC}"
+    
+    # 检查webui.json文件是否存在
+    if [ ! -f "$webui_file" ]; then
+        echo -e "${RED}错误: webui.json文件不存在: $webui_file${NC}"
+        return 1
+    fi
+    
+    # 备份原文件
+    local backup_file="${webui_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$webui_file" "$backup_file"
+    echo -e "${GREEN}已创建备份: $backup_file${NC}"
+    
+    # 检查autoLoginAccount字段是否存在
+    if grep -q '"autoLoginAccount":' "$webui_file"; then
+        # 字段存在，获取当前值
+        local current_qq=$(grep -o '"autoLoginAccount": *"[^"]*"' "$webui_file" | head -1 | sed 's/"autoLoginAccount": *"\([^"]*\)"/\1/')
+        
+        if [ -n "$current_qq" ] && [ "$current_qq" != "null" ]; then
+            echo -e "${GREEN}当前autoLoginAccount: $current_qq${NC}"
+            read -p "是否要更新为 $qq_number ？(Y/n): " update_choice
+            
+            if [[ "$update_choice" =~ ^[Nn]$ ]]; then
+                echo -e "${YELLOW}保持原QQ号: $current_qq${NC}"
+                rm -f "$backup_file"
+                return 0
+            fi
+        fi
+        
+        # 更新autoLoginAccount字段
+        sed -i "s/\"autoLoginAccount\": *\"[^\"]*\"/\"autoLoginAccount\": \"$qq_number\"/g" "$webui_file"
+        echo -e "${GREEN}✓ 已更新autoLoginAccount为: $qq_number${NC}"
+    else
+        # 字段不存在，需要添加
+        echo -e "${YELLOW}autoLoginAccount字段不存在，正在添加...${NC}"
+        
+        # 使用jq工具处理JSON（如果可用）
+        if command -v jq &> /dev/null; then
+            echo -e "${CYAN}使用jq工具添加autoLoginAccount字段...${NC}"
+            jq --arg qq "$qq_number" '. + {"autoLoginAccount": $qq}' "$webui_file" > "${webui_file}.tmp" && \
+            mv "${webui_file}.tmp" "$webui_file"
+        else
+            echo -e "${YELLOW}jq工具未安装，使用sed添加字段（可能不准确）${NC}"
+            # 尝试在最后一个}前添加字段
+            sed -i '$ s/}/,/' "$webui_file"  # 在最后一行}前添加逗号
+            sed -i "\$i\"autoLoginAccount\": \"$qq_number\"" "$webui_file"
+            sed -i '$ s/$/\n}/' "$webui_file"  # 确保以}结尾
+        fi
+        
+        echo -e "${GREEN}✓ 已添加autoLoginAccount字段: $qq_number${NC}"
+    fi
+    
+    # 验证更新
+    local updated_qq=$(grep -o '"autoLoginAccount": *"[^"]*"' "$webui_file" | head -1 | sed 's/"autoLoginAccount": *"\([^"]*\)"/\1/')
+    
+    if [ "$updated_qq" = "$qq_number" ]; then
+        echo -e "${GREEN}✓ 验证成功: autoLoginAccount已设置为 $updated_qq${NC}"
+    else
+        echo -e "${YELLOW}⚠ 验证失败，恢复备份文件${NC}"
+        cp "$backup_file" "$webui_file"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 修改onebot配置文件
+configure_napcat_onebot() {
+    echo ""
+    echo -e "${CYAN}正在查找onebot配置文件...${NC}"
+    
+    # 查找以onebot开头的.json文件
+    local onebot_files=$(find "$NAPCAT_CONFIG_DIR" -maxdepth 1 -name "onebot*.json" -type f)
+    
+    if [ -z "$onebot_files" ]; then
+        echo -e "${YELLOW}未找到onebot*.json文件${NC}"
+        echo -e "${CYAN}正在创建默认onebot配置文件...${NC}"
+        
+        # 尝试从napcat文件提取QQ号
+        local napcat_file=$(ls -t $NAPCAT_CONFIG_DIR/napcat_*.json 2>/dev/null | head -1)
+        local qq_number=""
+        
+        if [ -n "$napcat_file" ] && [ -f "$napcat_file" ]; then
+            qq_number=$(basename "$napcat_file" | sed -n 's/napcat_\([0-9]*\)\.json/\1/p')
+        fi
+        
+        if [ -n "$qq_number" ]; then
+            local onebot_file="$NAPCAT_CONFIG_DIR/onebot11_${qq_number}.json"
+        else
+            echo -e "${YELLOW}无法确定QQ号，创建通用onebot配置文件${NC}"
+            local onebot_file="$NAPCAT_CONFIG_DIR/onebot11_config.json"
+        fi
+    else
+        # 取第一个找到的onebot文件
+        local onebot_file=$(echo "$onebot_files" | head -1)
+    fi
+    
+    echo -e "${GREEN}处理onebot配置文件: $onebot_file${NC}"
+    
+    # 备份原文件（如果存在）
+    if [ -f "$onebot_file" ]; then
+        local backup_file="${onebot_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$onebot_file" "$backup_file"
+        echo -e "${GREEN}已创建备份: $backup_file${NC}"
+    fi
+    
+    # 清空文件并写入新内容
+    cat > "$onebot_file" << 'EOF'
+{
+  "network": {
+    "httpServers": [],
+    "httpSseServers": [],
+    "httpClients": [],
+    "websocketServers": [],
+    "websocketClients": [
+      {
+        "enable": true,
+        "name": "LoveElysia",
+        "url": "ws://localhost:8095",
+        "reportSelfMessage": false,
+        "messagePostFormat": "array",
+        "token": "",
+        "debug": false,
+        "heartInterval": 30000,
+        "reconnectInterval": 30000
+      }
+    ],
+    "plugins": []
+  },
+  "musicSignUrl": "",
+  "enableLocalFile2Url": false,
+  "parseMultMsg": false
+}
+EOF
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ onebot配置文件已成功更新${NC}"
+        echo -e "${YELLOW}文件路径: $onebot_file${NC}"
+        echo ""
+        echo -e "${CYAN}配置文件内容预览:${NC}"
+        cat "$onebot_file"
+    else
+        echo -e "${RED}✗ 写入onebot配置文件失败${NC}"
+        if [ -f "$backup_file" ]; then
+            echo -e "${YELLOW}正在恢复备份文件...${NC}"
+            cp "$backup_file" "$onebot_file"
+        fi
+        return 1
+    fi
+    
+    return 0
+}
+
+# 主配置函数：执行所有Napcat配置步骤
+configure_napcat_complete() {
+    print_header "配置Napcat QQ"
+    
+    echo -e "${CYAN}开始配置Napcat QQ...${NC}"
+    
+    # 步骤1: 配置token
+    echo -e "${YELLOW}[1/5] 配置Napcat Token...${NC}"
+    if ! configure_napcat_token; then
+        echo -e "${YELLOW}⚠ Token配置跳过或失败，继续其他配置...${NC}"
+    fi
+    
+    # 步骤2: 在screen中运行Napcat
+    echo -e "${YELLOW}[2/5] 启动Napcat QQ...${NC}"
+    if ! run_napcat_in_screen; then
+        echo -e "${RED}✗ 启动Napcat失败${NC}"
+        return 1
+    fi
+    
+    # 步骤3: 检查登录状态
+    echo -e "${YELLOW}[3/5] 检查Napcat登录状态...${NC}"
+    if ! check_napcat_login_status; then
+        echo -e "${YELLOW}⚠ 登录状态未确认，跳过后续配置${NC}"
+        return 1
+    fi
+    
+    # 等待Napcat生成配置文件
+    echo -e "${CYAN}等待Napcat生成配置文件...${NC}"
+    sleep 5
+    
+    # 步骤4: 更新autoLoginAccount
+    echo -e "${YELLOW}[4/5] 更新autoLoginAccount...${NC}"
+    if ! update_napcat_auto_login_account; then
+        echo -e "${YELLOW}⚠ 更新autoLoginAccount失败，跳过此项${NC}"
+    fi
+    
+    # 步骤5: 配置onebot
+    echo -e "${YELLOW}[5/5] 配置onebot...${NC}"
+    if ! configure_napcat_onebot; then
+        echo -e "${YELLOW}⚠ 配置onebot失败，跳过此项${NC}"
+    fi
+    
+    echo -e "${GREEN}✓ Napcat QQ配置完成${NC}"
+    
+    # 显示配置摘要
+    echo ""
+    echo -e "${CYAN}Napcat配置摘要:${NC}"
+    echo -e "${YELLOW}  • Token已配置${NC}"
+    echo -e "${YELLOW}  • Napcat已在screen中运行${NC}"
+    echo -e "${YELLOW}  • 登录状态已确认${NC}"
+    
+    # 检查autoLoginAccount配置
+    local webui_file="$NAPCAT_CONFIG_DIR/webui.json"
+    if [ -f "$webui_file" ]; then
+        local auto_login=$(grep -o '"autoLoginAccount": *"[^"]*"' "$webui_file" | head -1 | sed 's/"autoLoginAccount": *"\([^"]*\)"/\1/')
+        if [ -n "$auto_login" ] && [ "$auto_login" != "null" ]; then
+            echo -e "${YELLOW}  • autoLoginAccount: $auto_login${NC}"
+        fi
+    fi
+    
+    echo -e "${YELLOW}  • onebot配置文件已生成${NC}"
+    echo ""
+    echo -e "${GREEN}Napcat QQ已配置完成，可以与MoFox-Core配合使用！${NC}"
+    
+    return 0
+}
+
 # ============================================
 # 新增：检查MoFox目录函数
 # ============================================
@@ -447,8 +920,9 @@ fi
     [ "$INSTALL_MOFOX" = true ] && echo "   激活虚拟环境: source .venv/bin/activate"
     [ "$INSTALL_MOFOX" = true ] && echo "   启动机器人: python bot.py"
     echo ""
-    [ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 编辑 /opt/NapCatQQ/config/config.yaml 配置文件"
-    [ "$INSTALL_NAPCATQQ" = true ] && echo "   启动服务: systemctl start napcatqq"
+    [ "$INSTALL_NAPCATQQ" = true ] && echo "2. NapcatQQ: 配置已完成，Napcat正在运行中"
+    [ "$INSTALL_NAPCATQQ" = true ] && echo "   查看运行状态: screen -r napcat_qq"
+    [ "$INSTALL_NAPCATQQ" = true ] && echo "   停止Napcat: screen -S napcat_qq -X quit"
     echo ""
     [ "$INSTALL_1PANLE" = true ] && echo "3. 1Panel: 访问 http://<服务器IP>:目标端口"
     [ "$INSTALL_1PANLE" = true ] && echo "   使用安装时设置的用户名和密码登录"
@@ -690,7 +1164,7 @@ log_message() {
 # 软件安装函数
 # ============================================
 
-#安装napcatQQ
+# 安装napcatQQ
 install_napcatqq() {
     print_header "安装 NapcatQQ"
     
@@ -722,6 +1196,9 @@ install_napcatqq() {
             bash update.sh 2>/dev/null || bash update 2>/dev/null || true
             echo -e "${GREEN}✓${NC}"
             print_message "$GREEN" "✓ NapcatQQ升级完成"
+            
+            # 升级完成后进行配置
+            configure_napcat_complete
             return 0
         else
             echo -e "${YELLOW}⚠${NC}"
@@ -756,6 +1233,9 @@ install_napcatqq() {
                     if [ -f "update.sh" ]; then
                         bash update.sh >> "$INSTALL_LOG" 2>&1
                         print_message "$GREEN" "✓ NapcatQQ升级完成"
+                        
+                        # 升级完成后进行配置
+                        configure_napcat_complete
                         return 0
                     fi
                 fi
@@ -782,8 +1262,14 @@ install_napcatqq() {
     
     print_message "$GREEN" "✓ NapcatQQ安装完成"
     
+    # 安装完成后立即进行配置
+    echo ""
+    print_message "$CYAN" "开始配置NapcatQQ..."
+    configure_napcat_complete
+    
     return 0
 }
+
 # 安装coplar
 install_coplar() {
     print_header "安装 Cpolar"
@@ -943,7 +1429,7 @@ install_mofox() {
         return 1
     fi
     echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
-    # 步骤7：进入项目目录
+   #步骤7
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
     echo -e "${GREEN}✓${NC}"
@@ -1834,8 +2320,6 @@ fi
 
 # 根据检查结果决定流程
 if [ "$SKIP_SYSTEM_CHECK" = true ] && [ $check_mofox_result -eq 3 ]; then
-    # 快速安装模式
-    # ... 快速安装代码 ...
     # 快速安装模式
     echo ""
     print_message "$CYAN" "╔══════════════════════════════════════════════════════════╗"
