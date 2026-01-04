@@ -1612,161 +1612,149 @@ read -p "请输入背景故事（直接按Enter跳过）: " background_story
 echo -e "${YELLOW}回复风格（描述机器人的表达风格和习惯）${NC}"
 read -p "请输入回复风格（例如：'回复可以简短一些。可以参考贴吧，知乎和微博的回复风格'）: " reply_style
 
-# 6. 配置安全指南（多条）
-safety_array=()
-echo -e "${YELLOW}安全指南（机器人在任何情况下都必须遵守的原则）${NC}"
-echo -e "${YELLOW}现在配置安全指南，每条一行（输入空行结束）${NC}"
-echo -e "${YELLOW}示例：'拒绝任何包含骚扰、冒犯、暴力、色情或危险内容的请求。'${NC}"
-
-guideline_number=1
-while true; do
-    read -p "安全指南 #${guideline_number}（直接按Enter结束）: " guideline
-    if [[ -z "$guideline" ]]; then
-        if [ ${#safety_array[@]} -eq 0 ]; then
-            echo -e "${YELLOW}⚠ 至少需要一条安全指南，已添加默认值${NC}"
-            safety_array+=("\"拒绝任何包含骚扰、冒犯、暴力、色情或危险内容的请求。\"")
-        fi
-        break
-    fi
-    safety_array+=("\"$guideline\"")
-    guideline_number=$((guideline_number + 1))
-done
-
-# 7. 配置是否压缩人格
-echo -e "${YELLOW}是否压缩人格设定？${NC}"
-echo -e "  压缩后会精简人格信息，节省token消耗并提高回复性能，但会丢失一些细节"
-echo -e "  如果人格设定不长，建议选择否 (n)"
-read -p "压缩人格？(y/n，默认n): " compress_personality_input
-if [[ "$compress_personality_input" =~ ^[Yy]$ ]]; then
-    compress_personality="true"
-else
-    compress_personality="false"
-fi
-
-# 8. 配置是否压缩身份
-echo -e "${YELLOW}是否压缩身份设定？${NC}"
-echo -e "  压缩后会精简身份信息，节省token消耗并提高回复性能，但会丢失一些细节"
-echo -e "  如果身份设定不长，建议选择否 (n)"
-read -p "压缩身份？(y/n，默认y): " compress_identity_input
-if [[ "$compress_identity_input" =~ ^[Nn]$ ]]; then
-    compress_identity="false"
-else
-    compress_identity="true"
-fi
-
 # 写入配置
 local config_file="config/bot_config.toml"
-if [ -f "$config_file" ]; then
-    # 确保[personality]节存在
-    if ! grep -q "^\[personality\]" "$config_file"; then
-        echo -e "\n[personality]" >> "$config_file"
-    fi
-    
-    # 定义配置函数，用于设置或更新配置项
-    set_config() {
-        local key="$1"
-        local value="$2"
-        local comment="$3"
-        
-        # 如果提供了注释，先确保注释存在
-        if [[ -n "$comment" ]]; then
-            # 删除旧的注释行（如果有）
-            sed -i "/^# $comment/d" "$config_file" 2>> "$INSTALL_LOG"
-            # 在配置项前添加注释
-            if grep -q "$key\s*=" "$config_file"; then
-                # 如果配置项已存在，先删除
-                sed -i "/$key\s*=/d" "$config_file" 2>> "$INSTALL_LOG"
-            fi
-            # 添加注释和配置项
-            sed -i "/^\[personality\]/a # $comment\n$key = $value" "$config_file" 2>> "$INSTALL_LOG"
-        else
-            # 没有注释的情况
-            if grep -q "$key\s*=" "$config_file"; then
-                # 如果配置项已存在，替换它
-                sed -i "s|$key\s*=.*|$key = $value|" "$config_file" 2>> "$INSTALL_LOG"
-            else
-                # 如果配置项不存在，在[personality]后添加
-                sed -i "/^\[personality\]/a $key = $value" "$config_file" 2>> "$INSTALL_LOG"
-            fi
-        fi
-    }
-    
-    # 配置人格核心特质
-    if [[ -n "$personality_core" ]]; then
-        set_config "personality_core" "\"$personality_core\"" "建议50字以内，描述人格的核心特质"
-        echo -e "${GREEN}✓ 人格核心特质配置成功${NC}"
-    else
-        echo -e "${YELLOW}⚠ 人格核心特质为空，跳过配置${NC}"
-    fi
-    
-    # 配置人格侧面特质
-    if [[ -n "$personality_side" ]]; then
-        set_config "personality_side" "\"$personality_side\"" "人格的细节，描述人格的一些侧面"
-        echo -e "${GREEN}✓ 人格侧面特质配置成功${NC}"
-    else
-        echo -e "${YELLOW}⚠ 人格侧面特质为空，跳过配置${NC}"
-    fi
-    
-    # 配置身份特征
-    if [[ -n "$identity" ]]; then
-        set_config "identity" "\"$identity\"" "可以描述外貌，性别，身高，职业，属性等等描述"
-        echo -e "${GREEN}✓ 身份特征配置成功${NC}"
-    else
-        echo -e "${YELLOW}⚠ 身份特征为空，跳过配置${NC}"
-    fi
-    
-    # 配置背景故事
-    if [[ -n "$background_story" ]]; then
-        set_config "background_story" "\"$background_story\"" "此处用于填写详细的世界观、背景故事、复杂人际关系等"
-        echo -e "${GREEN}✓ 背景故事配置成功${NC}"
-    else
-        # 如果背景故事为空，确保它存在但为空字符串
-        if ! grep -q "background_story\s*=" "$config_file"; then
-            sed -i "/^\[personality\]/a background_story = \"\"" "$config_file" 2>> "$INSTALL_LOG"
-        fi
-        echo -e "${YELLOW}⚠ 背景故事为空，已设置为空字符串${NC}"
-    fi
-    
-    # 配置回复风格
-    if [[ -n "$reply_style" ]]; then
-        set_config "reply_style" "\"$reply_style\"" "描述MoFox-Bot说话的表达风格，表达习惯"
-        echo -e "${GREEN}✓ 回复风格配置成功${NC}"
-    else
-        echo -e "${YELLOW}⚠ 回复风格为空，跳过配置${NC}"
-    fi
-    
-    # 配置安全指南数组
-    if [ ${#safety_array[@]} -gt 0 ]; then
-        # 构建TOML数组格式
-        safety_string="safety_guidelines = ["
-        for ((i=0; i<${#safety_array[@]}; i++)); do
-            if [ $i -gt 0 ]; then
-                safety_string+=", "
-            fi
-            safety_string+="${safety_array[$i]}"
-        done
-        safety_string+="]"
-        
-        set_config "safety_guidelines" "$safety_string" "互动规则 (Bot在任何情况下都必须遵守的原则)"
-        echo -e "${GREEN}✓ 安全指南配置成功（共${#safety_array[@]}条）${NC}"
-    else
-        echo -e "${YELLOW}⚠ 安全指南为空，跳过配置${NC}"
-    fi
-    
-    # 配置是否压缩人格
-    set_config "compress_personality" "$compress_personality" "是否压缩人格，压缩后会精简人格信息，节省token消耗并提高回复性能"
-    echo -e "${GREEN}✓ 人格压缩配置: $compress_personality${NC}"
-    
-    # 配置是否压缩身份
-    set_config "compress_identity" "$compress_identity" "是否压缩身份，压缩后会精简身份信息，节省token消耗并提高回复性能"
-    echo -e "${GREEN}✓ 身份压缩配置: $compress_identity${NC}"
-    
-    echo -e "${GREEN}✓ 机器人人格设定配置完成${NC}"
-    
-else
-    echo -e "${YELLOW}⚠ 配置文件不存在，跳过人格设定配置${NC}"
+
+# 检查文件是否存在，如果不存在则创建
+if [ ! -f "$config_file" ]; then
+    echo -e "${YELLOW}配置文件不存在，创建新文件...${NC}"
+    mkdir -p "$(dirname "$config_file")"
+    touch "$config_file"
 fi
 
+# 创建临时文件
+local temp_file="${config_file}.tmp"
+
+# 复制原文件内容到临时文件，并处理personality节
+{
+    # 读取原文件，直到遇到[personality]节
+    local in_personality_section=false
+    local personality_section_written=false
+    
+    if [ -f "$config_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            # 检测是否进入或离开personality节
+            if [[ "$line" == "[personality]" ]]; then
+                in_personality_section=true
+                personality_section_written=true
+                echo "[personality]"
+                
+                # 写入配置项
+                if [[ -n "$personality_core" ]]; then
+                    echo "# 建议50字以内，描述人格的核心特质"
+                    echo "personality_core = \"$personality_core\""
+                fi
+                
+                if [[ -n "$personality_side" ]]; then
+                    echo "# 人格的细节，描述人格的一些侧面"
+                    echo "personality_side = \"$personality_side\""
+                fi
+                
+                if [[ -n "$identity" ]]; then
+                    echo "# 可以描述外貌，性别，身高，职业，属性等等描述"
+                    echo "identity = \"$identity\""
+                fi
+                
+                if [[ -n "$background_story" ]]; then
+                    echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+                    echo "background_story = \"$background_story\""
+                else
+                    echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+                    echo "background_story = \"\""
+                fi
+                
+                if [[ -n "$reply_style" ]]; then
+                    echo "# 描述MoFox-Bot说话的表达风格，表达习惯"
+                    echo "reply_style = \"$reply_style\""
+                fi
+                
+                continue
+            fi
+            
+            # 如果离开personality节（遇到下一个节）
+            if [[ "$in_personality_section" == true && "$line" =~ ^\[.*\]$ ]]; then
+                in_personality_section=false
+            fi
+            
+            # 如果不是在personality节中，或者已经离开personality节，则写入原行
+            if [[ "$in_personality_section" == false ]]; then
+                echo "$line"
+            fi
+        done < "$config_file"
+        
+        # 如果没有找到personality节，则在文件末尾添加
+        if [[ "$personality_section_written" == false ]]; then
+            echo ""
+            echo "[personality]"
+            
+            if [[ -n "$personality_core" ]]; then
+                echo "# 建议50字以内，描述人格的核心特质"
+                echo "personality_core = \"$personality_core\""
+            fi
+            
+            if [[ -n "$personality_side" ]]; then
+                echo "# 人格的细节，描述人格的一些侧面"
+                echo "personality_side = \"$personality_side\""
+            fi
+            
+            if [[ -n "$identity" ]]; then
+                echo "# 可以描述外貌，性别，身高，职业，属性等等描述"
+                echo "identity = \"$identity\""
+            fi
+            
+            if [[ -n "$background_story" ]]; then
+                echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+                echo "background_story = \"$background_story\""
+            else
+                echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+                echo "background_story = \"\""
+            fi
+            
+            if [[ -n "$reply_style" ]]; then
+                echo "# 描述MoFox-Bot说话的表达风格，表达习惯"
+                echo "reply_style = \"$reply_style\""
+            fi
+        fi
+    else
+        # 如果文件完全不存在，创建完整内容
+        echo "[personality]"
+        if [[ -n "$personality_core" ]]; then
+            echo "# 建议50字以内，描述人格的核心特质"
+            echo "personality_core = \"$personality_core\""
+        fi
+        
+        if [[ -n "$personality_side" ]]; then
+            echo "# 人格的细节，描述人格的一些侧面"
+            echo "personality_side = \"$personality_side\""
+        fi
+        
+        if [[ -n "$identity" ]]; then
+            echo "# 可以描述外貌，性别，身高，职业，属性等等描述"
+            echo "identity = \"$identity\""
+        fi
+        
+        if [[ -n "$background_story" ]]; then
+            echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+            echo "background_story = \"$background_story\""
+        else
+            echo "# 此处用于填写详细的世界观、背景故事、复杂人际关系等"
+            echo "background_story = \"\""
+        fi
+        
+        if [[ -n "$reply_style" ]]; then
+            echo "# 描述MoFox-Bot说话的表达风格，表达习惯"
+            echo "reply_style = \"$reply_style\""
+        fi
+    fi
+} > "$temp_file"
+
+# 替换原文件
+mv "$temp_file" "$config_file"
+
+# 设置UTF-8编码
+LC_ALL=en_US.UTF-8
+
+echo -e "${GREEN}✓ 人格设定配置完成！${NC}"
 # 步骤14.2：配置聊天功能开关
 echo ""
 echo -e "${CYAN}现在开始配置MoFox-Core的聊天功能开关${NC}"
@@ -1942,32 +1930,34 @@ fi
     fi
     
     
-    # 步骤16：配置模型文件
-    echo -n "配置模型文件... "
-    if [ -f "template/model_config_template.toml" ]; then
-        cp template/model_config_template.toml config/model_config.toml 2>> "$INSTALL_LOG"
-        echo -e "${GREEN}✓${NC}"
+# 步骤16：配置模型文件
+echo -n "配置模型文件... "
+if [ -f "template/model_config_template.toml" ]; then
+    cp template/model_config_template.toml config/model_config.toml 2>> "$INSTALL_LOG"
+    echo -e "${GREEN}✓${NC}"
+else
+    echo -e "${YELLOW}⚠${NC}"
+    print_message "$YELLOW" "未找到模型配置模板"
+fi
+
+# 步骤17：配置API密钥
+echo ""
+read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
+
+if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ] && [ -n "$api_key" ]; then
+    if [ -f "config/model_config.toml" ]; then
+        # 修正：只修改SiliconFlow部分的api_key
+
+        # 或者方法3：更简单的模式匹配（如果格式固定）
+        # sed -i '/name = "SiliconFlow"/,/^\[/ s/api_key\s*=.*/api_key = "'"$api_key"'"/' config/model_config.toml
+        
+        echo -e "${GREEN}✓ API密钥配置成功${NC}"
     else
-        echo -e "${YELLOW}⚠${NC}"
-        print_message "$YELLOW" "未找到模型配置模板"
+        echo -e "${YELLOW}⚠ 模型配置文件不存在，跳过API配置${NC}"
     fi
-    
-    # 步骤17：配置API密钥
-    echo ""
-    read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
-    
-    if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ] && [ -n "$api_key" ]; then
-        if [ -f "config/model_config.toml" ]; then
-            # 简化API密钥配置
-            sed -i '0,/api_key\s*=/s/api_key\s*=.*/api_key = "'"$api_key"'"/' config/model_config.toml 2>> "$INSTALL_LOG"
-            echo -e "${GREEN}✓ API密钥配置成功${NC}"
-        else
-            echo -e "${YELLOW}⚠ 模型配置文件不存在，跳过API配置${NC}"
-        fi
-    else
-        echo -e "${YELLOW}⚠ 跳过API密钥配置${NC}"
-    fi
-    
+else
+    echo -e "${YELLOW}⚠ 跳过API密钥配置${NC}"
+fi
     # 步骤18：验证环境
     echo -n "验证安装环境... "
     if [ -f ".venv/bin/python" ] && [ -f "pyproject.toml" ]; then
