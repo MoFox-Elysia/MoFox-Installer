@@ -145,13 +145,7 @@ print_mofox_ascii() {
     print_message "$BLUE" "║         ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
-    echo ""
-    echo "墨狐自动安装脚本"
-    echo "适用于Debian 11+ 以及armbian和部分主流linux发行版"
-    echo "作者：牡丹江市第一高级中学ACG社2023级社长越渊"
-    echo "创建日期：2026年1月1日"
-    echo "版本：2.7.6"
-    echo ""
+
 }
 
 # ============================================
@@ -1388,53 +1382,24 @@ install_mofox() {
     cd MoFox_Bot_Deployment || return 1
     echo -e "${GREEN}✓${NC}"
 
-   # 步骤6：智能克隆MoFox-Core仓库
-    echo -n "克隆MoFox-Core仓库... "
-    
-    # GitHub源测速
-    declare -A github_sources=(
-        ["direct"]="https://github.com/MoFox-Studio/MoFox-Core.git"
-        ["ghproxy"]="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
-    )
-    
-    # 测速函数
-    test_github_speed() {
-        local source_name=$1
-        local test_url=""
-        
-        case $source_name in
-            "direct") test_url="https://github.com" ;;
-            "ghproxy") test_url="https://ghproxy.com" ;;
-        esac
-        
-        local speed
-        speed=$(curl -o /dev/null -s -w "%{time_connect}\n" --connect-timeout 5 "$test_url" 2>/dev/null || echo "9999")
-        local speed_ms
-        speed_ms=$(echo "$speed * 1000" | bc 2>/dev/null | cut -d'.' -f1)
-        echo "${speed_ms:-9999}"
-    }
-    
-    # 测速选择
-    local best_source="direct"
-    local best_speed=9999
-    
-    for source_name in "${!github_sources[@]}"; do
-        local speed
-        speed=$(test_github_speed "$source_name")
-        if [ "$speed" -lt "$best_speed" ]; then
-            best_speed="$speed"
-            best_source="$source_name"
-        fi
-    done
-    
-    local selected_url="${github_sources[$best_source]}"
-    
-    # 克隆仓库
-    if ! git clone "$selected_url"; then
-        echo -e "${RED}✗ MoFox-Core仓库克隆失败${NC}"
+# 步骤6：克隆MoFox-Core仓库
+echo -n "克隆MoFox-Core仓库... "
+
+# 直接使用GitHub源进行克隆
+GITHUB_URL="https://github.com/MoFox-Studio/MoFox-Core.git"
+
+# 克隆仓库
+if ! git clone "$GITHUB_URL"; then
+    echo -e "${RED}✗ MoFox-Core仓库克隆失败${NC}"
+    echo "尝试使用镜像源..."
+    # 如果直接克隆失败，尝试使用镜像源
+    MIRROR_URL="https://ghproxy.com/https://github.com/MoFox-Studio/MoFox-Core.git"
+    if ! git clone "$MIRROR_URL"; then
+        echo -e "${RED}✗ 所有克隆尝试均失败${NC}"
         return 1
     fi
-    echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"    
+fi
+echo -e "${GREEN}✓ MoFox-Core仓库克隆成功${NC}"
    #步骤7
     echo -n "进入项目目录... "
     cd MoFox-Core || return 1
@@ -1946,28 +1911,33 @@ fi
     fi
     
     
-# 步骤16、17：配置模型文件
+# 步骤16：配置模型文件
 echo -n "配置模型文件... "
 if [ -f "template/model_config_template.toml" ]; then
     cp template/model_config_template.toml config/model_config.toml 2>> "$INSTALL_LOG"
     echo -e "${GREEN}✓${NC}"
-    
-    # 询问用户输入SiliconFlow的API Key
-    echo -n "请输入SiliconFlow的API Key（留空则保持默认）: "
-    read -r siliconflow_key
-    if [ -n "$siliconflow_key" ]; then
-        # 定位并替换SiliconFlow下的第一个api_key
-        sed -i '/name = "SiliconFlow"/,/^\[\[api_providers\]\]/ {
-            /api_key = ".*"/ {
-                s/api_key = ".*"/api_key = "'"$siliconflow_key"'"/
-                b
-            }
-        }' config/model_config.toml
-        echo -e "${GREEN}  ✓ SiliconFlow API Key已更新${NC}"
-    fi
 else
     echo -e "${YELLOW}⚠${NC}"
     print_message "$YELLOW" "未找到模型配置模板"
+fi
+
+# 步骤17：配置API密钥
+echo ""
+read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
+
+if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ] && [ -n "$api_key" ]; then
+    if [ -f "config/model_config.toml" ]; then
+        # 修正：只修改SiliconFlow部分的api_key
+
+        # 或者方法3：更简单的模式匹配（如果格式固定）
+        # sed -i '/name = "SiliconFlow"/,/^\[/ s/api_key\s*=.*/api_key = "'"$api_key"'"/' config/model_config.toml
+        
+        echo -e "${GREEN}✓ API密钥配置成功${NC}"
+    else
+        echo -e "${YELLOW}⚠ 模型配置文件不存在，跳过API配置${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ 跳过API密钥配置${NC}"
 fi
     # 步骤18：验证环境
     echo -n "验证安装环境... "
