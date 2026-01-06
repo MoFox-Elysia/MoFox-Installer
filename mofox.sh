@@ -145,7 +145,13 @@ print_mofox_ascii() {
     print_message "$BLUE" "║         ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ║"
     print_message "$BLUE" "║                                       ║"
     print_message "$BLUE" "╚═══════════════════════════════════════╝"
-
+    echo ""
+    echo "墨狐自动安装脚本"
+    echo "适用于Debian 11+ 以及armbian和部分主流linux发行版"
+    echo "作者：牡丹江市第一高级中学ACG社2023级社长越渊"
+    echo "创建日期：2026年1月1日"
+    echo "版本：2.7.6"
+    echo ""
 }
 
 # ============================================
@@ -1444,24 +1450,35 @@ install_mofox() {
         return 1
     fi
     
-    # 步骤9：在虚拟环境中安装Python依赖（带重试机制）
+# 步骤9：在虚拟环境中安装Python依赖（带重试机制）
     echo "安装Python依赖..."
     
-    # 移除openai-whisper依赖
-    echo -n "移除openai-whisper依赖... "
-    sed -i '/^openai-whisper$/d' requirements.txt
-    echo -e "${GREEN}✓${NC}"
-    
     # 方法1：使用uv指定Python路径（重试3次）
+    # 先安装numba和llvmlite依赖
+    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python \"numba>=0.56\" \"llvmlite>=0.40\"" "方法1: 安装numba和llvmlite"; then
+        echo -e "\r${GREEN}  ✓ numba和llvmlite安装成功${NC}"
+    else
+        echo -e "\r${RED}  ✗ numba和llvmlite安装失败${NC}"
+        print_message "$RED" "依赖安装完全失败"
+        return 1
+    fi
 
-    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装依赖"; then
+    if retry_command $MAX_RETRIES $RETRY_DELAY "UV_LINK_MODE=copy uv pip install --python .venv/bin/python -r requirements.txt" "方法1: uv安装requirements.txt依赖"; then
         echo -e "\r${GREEN}  ✓ 依赖安装成功 (使用uv指定python路径)${NC}"
     else
         echo -e "\r${RED}  ✗ 方法1失败${NC}"
         
         # 方法2：先激活虚拟环境再使用uv（重试3次）
+        # 先安装numba和llvmlite依赖
+        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install \"numba>=0.56\" \"llvmlite>=0.40\"" "方法2: 安装numba和llvmlite"; then
+            echo -e "\r${GREEN}  ✓ numba和llvmlite安装成功${NC}"
+        else
+            echo -e "\r${RED}  ✗ numba和llvmlite安装失败${NC}"
+            print_message "$RED" "依赖安装完全失败"
+            return 1
+        fi
 
-        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装"; then
+        if retry_command $MAX_RETRIES $RETRY_DELAY "source .venv/bin/activate && uv pip install -r requirements.txt" "方法2: 激活环境后uv安装requirements.txt依赖"; then
             echo -e "\r${GREEN}  ✓ 依赖安装成功 (激活环境后使用uv)${NC}"
         else
             echo -e "\r${RED}  ✗ 方法2失败${NC}"
@@ -1469,7 +1486,6 @@ install_mofox() {
             return 1
         fi
     fi
-
     # 步骤10：配置环境文件（使用虚拟环境中的Python）
     echo -n "配置环境文件... "
     cp template/template.env .env 2>> "$INSTALL_LOG"
@@ -1930,33 +1946,28 @@ fi
     fi
     
     
-# 步骤16：配置模型文件
+# 步骤16、17：配置模型文件
 echo -n "配置模型文件... "
 if [ -f "template/model_config_template.toml" ]; then
     cp template/model_config_template.toml config/model_config.toml 2>> "$INSTALL_LOG"
     echo -e "${GREEN}✓${NC}"
+    
+    # 询问用户输入SiliconFlow的API Key
+    echo -n "请输入SiliconFlow的API Key（留空则保持默认）: "
+    read -r siliconflow_key
+    if [ -n "$siliconflow_key" ]; then
+        # 定位并替换SiliconFlow下的第一个api_key
+        sed -i '/name = "SiliconFlow"/,/^\[\[api_providers\]\]/ {
+            /api_key = ".*"/ {
+                s/api_key = ".*"/api_key = "'"$siliconflow_key"'"/
+                b
+            }
+        }' config/model_config.toml
+        echo -e "${GREEN}  ✓ SiliconFlow API Key已更新${NC}"
+    fi
 else
     echo -e "${YELLOW}⚠${NC}"
     print_message "$YELLOW" "未找到模型配置模板"
-fi
-
-# 步骤17：配置API密钥
-echo ""
-read -p "请输入硅基流动API密钥 (输入'skip'跳过): " api_key
-
-if [ "$api_key" != "skip" ] && [ "$api_key" != "SKIP" ] && [ -n "$api_key" ]; then
-    if [ -f "config/model_config.toml" ]; then
-        # 修正：只修改SiliconFlow部分的api_key
-
-        # 或者方法3：更简单的模式匹配（如果格式固定）
-        # sed -i '/name = "SiliconFlow"/,/^\[/ s/api_key\s*=.*/api_key = "'"$api_key"'"/' config/model_config.toml
-        
-        echo -e "${GREEN}✓ API密钥配置成功${NC}"
-    else
-        echo -e "${YELLOW}⚠ 模型配置文件不存在，跳过API配置${NC}"
-    fi
-else
-    echo -e "${YELLOW}⚠ 跳过API密钥配置${NC}"
 fi
     # 步骤18：验证环境
     echo -n "验证安装环境... "
