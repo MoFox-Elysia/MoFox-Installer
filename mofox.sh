@@ -727,39 +727,19 @@ check_napcat_directory() {
     local found_dirs=()
     local napcat_dir=""
     
-    # 扩展搜索路径，包含更多可能的目录
+    # 只搜索用户目录和root目录
     local search_paths=(
-        "/opt/Napcat"
-        "/usr/local/Napcat"
         "$HOME/Napcat"
         "/root/Napcat"
-        "/home/$USER/Napcat"
-
     )
     
-    # 使用find命令进行更广泛的搜索
+    # 检查指定目录
     echo -n "搜索NapcatQQ目录... "
     for path in "${search_paths[@]}"; do
         if [ -d "$path" ]; then
             found_dirs+=("$path")
         fi
     done
-    
-    # 使用find命令搜索包含"napcat"或"NapCat"的目录
-    if [ ${#found_dirs[@]} -eq 0 ]; then
-        echo -n "(使用find搜索)... "
-        # 搜索根目录下包含napcat的目录
-        local found_by_find
-        found_by_find=$(find / -type d -name "*napcat*" -o -name "*NapCat*" 2>/dev/null | head -5)
-        
-        if [ -n "$found_by_find" ]; then
-            while IFS= read -r dir; do
-                if [ -d "$dir" ]; then
-                    found_dirs+=("$dir")
-                fi
-            done <<< "$found_by_find"
-        fi
-    fi
     
     # 检查进程
     if pgrep -f "napcat\|NapCat" > /dev/null 2>&1; then
